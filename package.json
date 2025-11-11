@@ -1,0 +1,39 @@
+{
+  "name": "otaflick",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "app": "nodemon app.js",
+    "start:server": "node start-server.js",
+    "dev": "concurrently \"npm run app\" \"npm run start:server\""
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.0",
+    "basic-auth": "^2.0.1",
+    "bcrypt": "^5.1.1",
+    "bcryptjs": "^3.0.3",
+    "body-parser": "^1.20.2",
+    "child_process": "^1.0.2",
+    "concurrently": "^8.2.2",
+    "connect-flash": "^0.1.1",
+    "connect-mongo": "^5.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "hbs": "^4.2.0",
+    "http-server": "^14.1.1",
+    "mailtrap": "^4.3.0",
+    "mongodb": "^6.6.2",
+    "mongoose": "^8.4.0",
+    "nodemon": "^3.1.0",
+    "passport": "^0.7.0",
+    "passport-local-mongoose": "^8.0.0",
+    "request": "^2.88.2",
+    "socket.io": "^4.8.1"
+  }
+}

@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/addMovie.css">
+    <title>Anime Details</title>
+</head>
+
+<body>
+    <h1 style="text-align: center;">Anime Details</h1>
+    <a href="/">Go to Dashboard</a>
+
+    <div class="showDetailsContainer">
+        <div class="posterContainer">
+            <img src="{{animeDetails.poster_path}}" alt="Anime Poster">
+        </div>
+
+        <div class="detailsTextContainer">
+            <h2>{{animeDetails.name}}</h2>
+            <p style="font-size: 0.8em; margin-bottom:5px">{{animeDetails.overview}}</p>
+            <p style="font-size: 0.8em; font-weight: bold;">{{animeDetails.first_air_date}} • {{animeDetails.genres}} •
+                {{animeDetails.vote_average}}/10</p>
+
+        <label style="font-size: 0.8em; margin-bottom:5px" for="ignoreTitleOnScan">Ignore this anime on Scan:</label>
+            <select id="ignoreTitleOnScan" name="ignoreTitleOnScan">
+                <option value="false">False</option>
+                <option value="true">True</option>
+            </select><br>
+
+            <div id="animeDirNameContainer" style="display: none;">
+                <label style="font-size: 0.8em; margin-bottom:5px" for="animeDirName">Anime directory name:</label>
+                <input type="text" id="animeDirName" name="animeDirName" value="" /><br>
+            </div>
+        </div>
+    </div>
+
+
+
+    {{#each animeDetails.seasons}}
+    <div class="seasonContainer">
+        <h3 class="seasonNum">Season {{this.season_number}}</h3>
+        <div>
+            {{#each this.episodes}}
+            <div class="episodeDetailsContainer">
+                <!-- Include episode poster if available -->
+                {{#if this.poster}}
+                <div class="episodePosterContainer">
+                    <img src="{{this.poster}}" alt="Episode Poster" style="max-width: 100px;">
+                </div>
+                {{/if}}
+                <div class="episodedetailsTextContainer">
+                    <strong>Episode {{this.episode_number}}:</strong> {{this.name}} ({{this.runtime}} mins)
+                    <p>{{this.overview}}</p>
+
+                    <!-- Add a textbox for the download link for each episode -->
+                    <label for="episodeDownloadLink">Download Link:</label>
+                    <input type="text" id="edl{{../season_number}}{{this.episode_number}}"
+                        name="edl{{../season_number}}{{this.episode_number}}" value="{{this.downloadLink}}"
+                        placeholder="Enter download link" /><br>
+                </div>
+            </div>
+            {{/each}}
+        </div>
+    </div>
+    {{/each}}
+
+
+    <button class="submit-btn" type="button" id="submitAnimeButton">Add Anime</button>
+
+
+
+    {{#if errorMessage}}
+    <p style="color: red;">{{errorMessage}}</p>
+    {{/if}}
+
+    {{#if successMessage}}
+    <p style="color: green;">{{successMessage}}</p>
+    {{/if}}
+
+<!-- Store anime data in hidden elements that won't break JavaScript -->
+<div id="animeData" 
+     data-poster-path="{{animeDetails.poster_path}}"
+     data-backdrop-path="{{animeDetails.backdrop_path}}"
+     data-name="{{animeDetails.name}}"
+     data-overview="{{animeDetails.overview}}"
+     data-first-air-date="{{animeDetails.first_air_date}}"
+     data-genres="{{animeDetails.genres}}"
+     data-vote-average="{{animeDetails.vote_average}}"
+     style="display: none;">
+</div>
+
+<script>
+    // Wait for DOM to be fully loaded
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log('DOM loaded, setting up event listeners');
+        
+        // Setup the ignore title on scan functionality
+        const ignoreTitleSelect = document.getElementById('ignoreTitleOnScan');
+        const animeDirNameContainer = document.getElementById('animeDirNameContainer');
+        
+        if (ignoreTitleSelect) {
+            ignoreTitleSelect.addEventListener('change', function () {
+                if (this.value === 'true') {
+                    animeDirNameContainer.style.display = 'block';
+                } else {
+                    animeDirNameContainer.style.display = 'none';
+                }
+            });
+
+            // Trigger the change event on page load to set the initial state correctly
+            ignoreTitleSelect.dispatchEvent(new Event('change'));
+        }
+
+        // Setup the submit button
+        const submitButton = document.getElementById('submitAnimeButton');
+        if (submitButton) {
+            submitButton.addEventListener('click', submitAnimeDetails);
+            console.log('Submit button event listener added');
+        } else {
+            console.error('Submit button not found!');
+        }
+    });
+
+    function submitAnimeDetails() {
+        console.log('submitAnimeDetails function called');
+        
+        var ignoreTitleOnScanValue = document.getElementById('ignoreTitleOnScan').value;
+        var animeDirNameValue = ignoreTitleOnScanValue === 'true' ? document.getElementById('animeDirName').value : '';
+        
+        // Get data from hidden element (safe approach)
+        const animeDataElement = document.getElementById('animeData');
+        
+        var animeDetailsData = {
+            animeDetails: {
+                poster_path: animeDataElement.dataset.posterPath,
+                backdrop_path: animeDataElement.dataset.backdropPath,
+                name: animeDataElement.dataset.name,
+                overview: animeDataElement.dataset.overview,
+                first_air_date: animeDataElement.dataset.firstAirDate,
+                genres: animeDataElement.dataset.genres,
+                vote_average: animeDataElement.dataset.voteAverage,
+                ignoreTitleOnScan: ignoreTitleOnScanValue,
+                animeDirName: animeDirNameValue
+            },
+            seasons: []
+        };
+
+        // Manually collect season and episode data
+        const seasonContainers = document.querySelectorAll('.seasonContainer');
+        
+        seasonContainers.forEach(seasonContainer => {
+            const seasonNumber = seasonContainer.querySelector('.seasonNum').textContent.replace('Season ', '');
+            const seasonData = {
+                season_number: seasonNumber,
+                episodes: []
+            };
+
+            const episodeContainers = seasonContainer.querySelectorAll('.episodeDetailsContainer');
+            
+            episodeContainers.forEach(episodeContainer => {
+                const episodeNumber = episodeContainer.querySelector('strong').textContent.match(/Episode (\d+)/)[1];
+                const episodeName = episodeContainer.querySelector('strong').textContent.split(':')[1]?.trim() || '';
+                const runtimeMatch = episodeContainer.querySelector('strong').textContent.match(/\((\d+) mins\)/);
+                const runtime = runtimeMatch ? runtimeMatch[1] : '0';
+                const overview = episodeContainer.querySelector('p').textContent;
+                
+                // Get download link from input
+                const downloadInput = document.getElementById(`edl${seasonNumber}${episodeNumber}`);
+                const downloadLink = downloadInput ? downloadInput.value : '';
+
+                const episodeData = {
+                    episode_number: episodeNumber,
+                    name: episodeName,
+                    runtime: runtime,
+                    overview: overview,
+                    poster: "", // We'll get this from the original data if needed
+                    downloadLink: downloadLink
+                };
+
+                seasonData.episodes.push(episodeData);
+            });
+
+            animeDetailsData.seasons.push(seasonData);
+        });
+
+        console.log("Anime Details on button clicked", animeDetailsData);
+
+        fetch('/add-anime-details', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(animeDetailsData),
+        })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Success:', data);
+                if (data.success) {
+                    alert("Anime has been added successfully!!")
+                } else {
+                    alert("Failed to add the anime!!")
+                }
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+            });
+    }
+</script>
+
+<style>
+    .showDetailsContainer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        max-width: 800px;
+        margin: 0 auto;
+    }
+
+    .seasonNum {
+        text-align: center;
+    }
+
+    .episodeDetailsContainer {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        max-width: 800px;
+        margin: 0 auto;
+        border-bottom: 1px solid black;
+        margin-top: 10px;
+    }
+
+    .episodePosterContainer {
+        flex-shrink: 0;
+    }
+
+    .episodePosterContainer img {
+        max-width: 100%;
+        height: auto;
+    }
+
+    .episodedetailsTextContainer {
+        flex-grow: 1;
+        margin-left: 20px;
+        margin-bottom: 25px;
+        font-size: 0.8em;
+    }
+
+    .episodedetailsTextContainer h2 {
+        margin-top: 0;
+    }
+</style>
+
+</html>
