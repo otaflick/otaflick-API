@@ -9,8 +9,28 @@
 </head>
 
 <body>
-    <h1 style="text-align: center;">TV Show Details</h1>
+    <h1 style="text-align: center;">Update TV Show Details</h1>
     <a href="/">Go to Dashboard</a>
+    <a href="/edit-shows-list" style="margin-left: 10px;">Back to Shows List</a>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; z-index: 1000; justify-content: center; align-items: center; flex-direction: column;">
+        <div style="text-align: center;">
+            <h2 id="overallStatus">Uploading Files to S3...</h2>
+            <div style="width: 300px; height: 20px; background: #333; border-radius: 10px; margin: 20px auto;">
+                <div id="progressBar"
+                    style="width: 0%; height: 100%; background: #4CAF50; border-radius: 10px; transition: width 0.3s;">
+                </div>
+            </div>
+            <p id="progressText">0%</p>
+            <p id="fileStatus">Preparing upload...</p>
+            <p id="uploadSpeed" style="font-size: 0.8em; color: #ccc;"></p>
+            <button id="cancelButton" style="margin-top: 20px; padding: 8px 16px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; display: none;">
+                Cancel Upload
+            </button>
+        </div>
+    </div>
 
     <div class="showDetailsContainer">
         <div class="posterContainer">
@@ -25,29 +45,40 @@
         </div>
     </div>
 
-
-
     {{#each showsDetails.seasons}}
     <div class="seasonContainer">
         <h3 class="seasonNum">Season {{this.season_number}}</h3>
         <div>
             {{#each this.episodes}}
             <div class="episodeDetailsContainer">
-                <!-- Include episode poster if available -->
                 {{#if this.poster}}
                 <div class="episodePosterContainer">
-                    <img src={{this.poster}} alt="Episode Poster" style="max-width: 100px;">
+                    <img src="{{this.poster}}" alt="Episode Poster" style="max-width: 100px;">
                 </div>
                 {{/if}}
                 <div class="episodedetailsTextContainer">
                     <strong>Episode {{this.episode_number}}:</strong> {{this.name}} ({{this.runtime}} mins)
                     <p>{{this.overview}}</p>
 
-                    <!-- Add a textbox for the download link for each episode -->
-                    <label for="episodeDownloadLink">Download Link:</label>
+                    <!-- Text input for download link -->
+                    <label for="episodeDownloadLink">Download Link (URL):</label>
                     <input type="text" id="edl{{../season_number}}{{this.episode_number}}"
                         name="edl{{../season_number}}{{this.episode_number}}" value="{{this.downloadLink}}"
-                        placeholder="Enter download link" /><br>
+                        placeholder="Enter download URL" /><br>
+
+                    <!-- File upload for S3 -->
+                    <label for="file_edl{{../season_number}}{{this.episode_number}}">Or Upload New File:</label>
+                    <input type="file" id="file_edl{{../season_number}}{{this.episode_number}}"
+                        name="file_edl{{../season_number}}{{this.episode_number}}"
+                        accept=".torrent,.magnet,.txt,.json,.download,.link,.mkv,.mp4,.avi,.mov,.wmv,.flv,.webm,.m4v,.3gp"
+                        data-season="{{../season_number}}" data-episode="{{this.episode_number}}"
+                        class="file-upload-input" />
+                    <small style="color: #666;">Supported: .torrent, .magnet, .txt, .json, .mkv, .mp4, .avi, .mov, .wmv, .flv, .webm</small>
+
+                    <div class="file-info" id="fileInfo_edl{{../season_number}}{{this.episode_number}}"
+                        style="display: none; font-size: 0.7em; color: #666;">
+                        No file selected
+                    </div>
                 </div>
             </div>
             {{/each}}
@@ -55,10 +86,7 @@
     </div>
     {{/each}}
 
-
-    <button class="submit-btn" type="button" onclick="submitShowsDetails()">Update TV Show</button>
-
-
+    <button class="submit-btn" type="button" id="updateShowButton">Update TV Show</button>
 
     {{#if errorMessage}}
     <p style="color: red;">{{errorMessage}}</p>
@@ -67,138 +95,415 @@
     {{#if successMessage}}
     <p style="color: green;">{{successMessage}}</p>
     {{/if}}
-</body>
 
-<script>
-    function submitShowsDetails() {
-        // Assuming showsDetails is a JavaScript object
-        var showsDetailsData = {
-            showDetails: {
-                poster_path: "{{showsDetails.posterPath}}",
-                backdrop_path: "{{showsDetails.backdropPath}}",
-                name: "{{showsDetails.name}}",
-                overview: "{{showsDetails.overview}}",
-                first_air_date: "{{showsDetails.releaseDate}}",
-                genres: "{{showsDetails.genres}}",
-                vote_average: "{{showsDetails.ratings}}"
-            },
-            seasons: []
-        };
+    <script>
+        let currentXHR = null;
+        let isUploading = false;
 
-        {{#each showsDetails.seasons}}
-            var seasonData = {
-                season_number: "{{this.season_number}}",
-                episodes: []
-            };
+        // Function to update progress
+        function updateProgress(percentage, status = '', overallStatus = '') {
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const fileStatus = document.getElementById('fileStatus');
+            const overallStatusElement = document.getElementById('overallStatus');
+            
+            progressBar.style.width = `${percentage}%`;
+            progressText.textContent = `${Math.round(percentage)}%`;
+            if (status) {
+                fileStatus.textContent = status;
+            }
+            if (overallStatus) {
+                overallStatusElement.textContent = overallStatus;
+            }
+        }
 
-            {{#each this.episodes}}
-                var episodeData = {
-                    episode_number: "{{this.episode_number}}",
-                    name: "{{this.name}}",
-                    runtime: "{{this.runtime}}",
-                    overview: "{{this.overview}}",
-                    poster: "{{this.poster}}",  // Add poster path if available
-                    downloadLink: document.getElementById("edl{{../season_number}}{{this.episode_number}}").value // Get download link from the input field
+        // Function to calculate and display upload speed
+        function calculateUploadSpeed(startTime, loaded, total) {
+            const elapsedTime = (Date.now() - startTime) / 1000; // in seconds
+            if (elapsedTime > 0) {
+                const speed = loaded / elapsedTime; // bytes per second
+                const speedMB = (speed / 1024 / 1024).toFixed(2);
+                const uploadSpeedElement = document.getElementById('uploadSpeed');
+                uploadSpeedElement.textContent = `Speed: ${speedMB} MB/s`;
+            }
+        }
+
+        // XMLHttpRequest with progress tracking
+        function uploadWithProgress(url, formData) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                currentXHR = xhr;
+                const startTime = Date.now();
+
+                xhr.upload.addEventListener('progress', (event) => {
+                    if (event.lengthComputable) {
+                        const percentComplete = (event.loaded / event.total) * 100;
+                        updateProgress(
+                            percentComplete, 
+                            `Uploading: ${Math.round(percentComplete)}%`,
+                            'Uploading to S3...'
+                        );
+                        calculateUploadSpeed(startTime, event.loaded, event.total);
+                    }
+                });
+
+                xhr.addEventListener('load', () => {
+                    currentXHR = null;
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try {
+                            const response = JSON.parse(xhr.responseText);
+                            resolve(response);
+                        } catch (e) {
+                            reject(new Error('Invalid JSON response from server'));
+                        }
+                    } else {
+                        reject(new Error(`Upload failed with status ${xhr.status}`));
+                    }
+                });
+
+                xhr.addEventListener('error', () => {
+                    currentXHR = null;
+                    reject(new Error('Upload failed due to network error'));
+                });
+
+                xhr.addEventListener('abort', () => {
+                    currentXHR = null;
+                    reject(new Error('Upload was cancelled'));
+                });
+
+                xhr.open('POST', url);
+                xhr.send(formData);
+            });
+        }
+
+        // Function to cancel upload
+        function cancelUpload() {
+            if (currentXHR) {
+                currentXHR.abort();
+                currentXHR = null;
+            }
+            isUploading = false;
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            const updateButton = document.getElementById('updateShowButton');
+            const cancelButton = document.getElementById('cancelButton');
+            
+            loadingOverlay.style.display = 'none';
+            updateButton.disabled = false;
+            updateButton.textContent = 'Update TV Show';
+            cancelButton.style.display = 'none';
+            
+            alert('Upload cancelled');
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            // File input handlers
+            const fileInputs = document.querySelectorAll('.file-upload-input');
+            fileInputs.forEach(input => {
+                input.addEventListener('change', function (e) {
+                    const fileInfo = document.getElementById(`fileInfo_${this.id}`);
+                    if (this.files.length > 0) {
+                        const file = this.files[0];
+                        const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+                        fileInfo.innerHTML = `Selected: ${file.name} (${fileSizeMB} MB)`;
+                        fileInfo.style.display = 'block';
+
+                        // Clear text input
+                        const season = this.dataset.season;
+                        const episode = this.dataset.episode;
+                        const textInput = document.getElementById(`edl${season}${episode}`);
+                        if (textInput) {
+                            textInput.value = '';
+                        }
+                    } else {
+                        fileInfo.style.display = 'none';
+                    }
+                });
+            });
+
+            // Cancel button handler
+            const cancelButton = document.getElementById('cancelButton');
+            if (cancelButton) {
+                cancelButton.addEventListener('click', cancelUpload);
+            }
+
+            const updateButton = document.getElementById('updateShowButton');
+            if (updateButton) {
+                updateButton.addEventListener('click', updateShowsDetails);
+            }
+        });
+
+        async function updateShowsDetails() {
+            if (isUploading) return;
+            
+            isUploading = true;
+            const updateButton = document.getElementById('updateShowButton');
+            const cancelButton = document.getElementById('cancelButton');
+            updateButton.disabled = true;
+            updateButton.textContent = 'Updating...';
+
+            // Show loading overlay and cancel button
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            const uploadSpeedElement = document.getElementById('uploadSpeed');
+            
+            loadingOverlay.style.display = 'flex';
+            cancelButton.style.display = 'block';
+            updateProgress(0, 'Preparing update...', 'Starting update process...');
+            uploadSpeedElement.textContent = '';
+
+            try {
+                // Create form data for the entire submission
+                const formData = new FormData();
+                
+                // Create shows details data structure
+                const showsDetailsData = {
+                    showDetails: {
+                        poster_path: "{{showsDetails.posterPath}}",
+                        backdrop_path: "{{showsDetails.backdropPath}}",
+                        name: "{{showsDetails.name}}",
+                        overview: "{{showsDetails.overview}}",
+                        first_air_date: "{{showsDetails.releaseDate}}",
+                        genres: "{{showsDetails.genres}}",
+                        vote_average: "{{showsDetails.ratings}}"
+                    },
+                    seasons: []
                 };
 
-                seasonData.episodes.push(episodeData);
-            {{/each}}
+                // Count total files to upload
+                const fileInputs = document.querySelectorAll('.file-upload-input');
+                let totalFiles = 0;
+                let uploadedFiles = 0;
 
-            showsDetailsData.seasons.push(seasonData);
-        {{/each}}
-
-                        // Log the showsDetailsData
-                        console.log("Shows Details on button clicked", showsDetailsData);
-
-                        // You can send this data to the server or perform other actions
-
-                        fetch('/update-show/{{showsDetails._id}}', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify(showsDetailsData),
-                        })
-                            .then(response => response.json())
-                            .then(data => {
-                                console.log('Success:', data);
-                                if (data.success) {
-                                    alert("Show has been updated successfully!!")
-                                } else {
-                                    alert("Failed to update the show!!")
-                                }
-                                // Handle success response from the server
-                            })
-                            .catch((error) => {
-                                console.error('Error:', error);
-                                // Handle error
-                            });
+                fileInputs.forEach(input => {
+                    if (input.files.length > 0) {
+                        totalFiles++;
+                        formData.append(input.name, input.files[0]);
                     }
-</script>
+                });
 
-<style>
-    .showDetailsContainer {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        max-width: 800px;
-        margin: 0 auto;
-    }
+                // Process each season and episode
+                const seasonElements = document.querySelectorAll('.seasonContainer');
+                
+                for (const seasonElement of seasonElements) {
+                    const seasonNumber = seasonElement.querySelector('.seasonNum').textContent.replace('Season ', '');
+                    const seasonData = {
+                        season_number: seasonNumber,
+                        episodes: []
+                    };
 
-    .posterContainer {
-        flex-shrink: 0;
-    }
+                    const episodeElements = seasonElement.querySelectorAll('.episodeDetailsContainer');
+                    
+                    for (const episodeElement of episodeElements) {
+                        const episodeNumber = episodeElement.querySelector('strong').textContent.match(/Episode (\d+)/)[1];
+                        const episodeName = episodeElement.querySelector('strong').textContent.split(':')[1]?.trim() || '';
+                        const runtimeMatch = episodeElement.querySelector('strong').textContent.match(/\((\d+) mins\)/);
+                        const runtime = runtimeMatch ? runtimeMatch[1] : '0';
+                        const overview = episodeElement.querySelector('p').textContent;
+                        const poster = episodeElement.querySelector('img') ? episodeElement.querySelector('img').src : '';
+                        
+                        // Get download link from input
+                        const downloadInput = document.getElementById(`edl${seasonNumber}${episodeNumber}`);
+                        let downloadLink = downloadInput ? downloadInput.value : '';
 
-    .posterContainer img {
-        max-width: 100%;
-        height: auto;
-    }
+                        // Check if there's a file to upload for this episode
+                        const fileInput = document.getElementById(`file_edl${seasonNumber}${episodeNumber}`);
+                        if (fileInput && fileInput.files.length > 0) {
+                            const file = fileInput.files[0];
+                            
+                            updateProgress(
+                                (uploadedFiles / totalFiles) * 100,
+                                `Uploading: ${file.name}`,
+                                'Uploading episode files...'
+                            );
 
-    .detailsTextContainer {
-        flex-grow: 1;
-        margin-left: 20px;
-        /* Adjust the margin as needed */
-    }
+                            // Upload file to S3
+                            const fileFormData = new FormData();
+                            fileFormData.append('file', file);
+                            fileFormData.append('showName', showsDetailsData.showDetails.name);
+                            fileFormData.append('season', seasonNumber);
+                            fileFormData.append('episode', episodeNumber);
 
-    .detailsTextContainer h2 {
-        margin-top: 0;
-        /* Remove default margin for h2 */
-    }
+                            try {
+                                const uploadResponse = await uploadWithProgress('/upload-show-to-s3-update', fileFormData);
+                                
+                                if (uploadResponse.success) {
+                                    downloadLink = uploadResponse.url;
+                                    console.log(`Episode ${episodeNumber} file uploaded to S3: ${downloadLink}`);
+                                } else {
+                                    console.error(`Failed to upload episode ${episodeNumber}:`, uploadResponse.error);
+                                }
+                            } catch (uploadError) {
+                                console.error(`Upload failed for episode ${episodeNumber}:`, uploadError);
+                            }
 
-    .seasonNum {
-        text-align: center;
-    }
+                            uploadedFiles++;
+                        }
 
-    .episodeDetailsContainer {
-        display: flex;
-        align-items: flex-start;
-        /* Adjusted alignment to flex-start */
-        justify-content: space-between;
-        max-width: 800px;
-        margin: 0 auto;
-        border-bottom: 1px solid black;
-        margin-top: 10px;
-    }
+                        const episodeData = {
+                            episode_number: episodeNumber,
+                            name: episodeName,
+                            runtime: runtime,
+                            overview: overview,
+                            poster: poster,
+                            downloadLink: downloadLink
+                        };
 
-    .episodePosterContainer {
-        flex-shrink: 0;
-    }
+                        seasonData.episodes.push(episodeData);
+                    }
 
-    .episodePosterContainer img {
-        max-width: 100%;
-        height: auto;
-    }
+                    showsDetailsData.seasons.push(seasonData);
+                }
 
-    .episodedetailsTextContainer {
-        flex-grow: 1;
-        margin-left: 20px;
-        margin-bottom: 25px;
-        font-size: 0.8em;
-    }
+                // Add the JSON data to formData
+                formData.append('showsDetailsData', JSON.stringify(showsDetailsData));
 
-    .episodedetailsTextContainer h2 {
-        margin-top: 0;
-    }
-</style>
+                console.log("Updated Shows Details with S3 URLs", showsDetailsData);
 
+                // Submit the final data
+                updateProgress(100, 'Updating show in database...', 'Finalizing...');
+
+                const response = await fetch('/update-show/{{showsDetails._id}}', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+
+                const data = await response.json();
+                console.log('Success:', data);
+
+                if (data.success) {
+                    // Show success status briefly before showing alert
+                    updateProgress(100, 'Show updated successfully!', 'Complete!');
+                    await new Promise(resolve => setTimeout(resolve, 1500));
+                    
+                    alert("Show has been updated successfully!!");
+                    // Optionally redirect or refresh the page
+                    // window.location.reload();
+                } else {
+                    throw new Error(data.error || 'Failed to update the show');
+                }
+
+            } catch (error) {
+                console.error('Error:', error);
+                // Show error status
+                updateProgress(0, `Error: ${error.message}`, 'Update Failed');
+                // Keep the overlay visible for a moment to show the error
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                alert(`Error: ${error.message}`);
+            } finally {
+                isUploading = false;
+                currentXHR = null;
+                loadingOverlay.style.display = 'none';
+                cancelButton.style.display = 'none';
+                updateButton.disabled = false;
+                updateButton.textContent = 'Update TV Show';
+            }
+        }
+    </script>
+
+    <style>
+        .showDetailsContainer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .posterContainer {
+            flex-shrink: 0;
+        }
+
+        .posterContainer img {
+            max-width: 100%;
+            height: auto;
+        }
+
+        .detailsTextContainer {
+            flex-grow: 1;
+            margin-left: 20px;
+        }
+
+        .detailsTextContainer h2 {
+            margin-top: 0;
+        }
+
+        .seasonNum {
+            text-align: center;
+        }
+
+        .episodeDetailsContainer {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            max-width: 800px;
+            margin: 0 auto;
+            border-bottom: 1px solid black;
+            margin-top: 10px;
+            padding: 10px;
+        }
+
+        .episodePosterContainer {
+            flex-shrink: 0;
+        }
+
+        .episodePosterContainer img {
+            max-width: 100%;
+            height: auto;
+        }
+
+        .episodedetailsTextContainer {
+            flex-grow: 1;
+            margin-left: 20px;
+            margin-bottom: 25px;
+            font-size: 0.8em;
+        }
+
+        .episodedetailsTextContainer h2 {
+            margin-top: 0;
+        }
+
+        .file-upload-input {
+            margin: 5px 0;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100%;
+        }
+
+        .file-info {
+            margin-top: 5px;
+            padding: 5px;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+
+        .submit-btn {
+            background-color: #2196F3;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 15px;
+        }
+
+        .submit-btn:hover {
+            background-color: #1976D2;
+        }
+
+        .submit-btn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        #cancelButton:hover {
+            background-color: #d32f2f;
+        }
+    </style>
+
+</body>
 </html>

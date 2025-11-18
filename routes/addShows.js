@@ -2,7 +2,57 @@ require('dotenv').config();
 const express = require('express');
 const router = express.Router()
 const Shows = require('../models/Shows')
+const s3 = require('../service/aws.s3.bucket');
+const { v4: uuidv4 } = require('uuid');
+const multer = require('multer');
+const ffmpeg = require('fluent-ffmpeg');
+const fs = require('fs');
+const path = require('path');
+const { promisify } = require('util');
+const writeFile = promisify(fs.writeFile);
+const unlink = promisify(fs.unlink);
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+ffmpeg.setFfmpegPath(ffmpegPath);
 
+// Configure multer for file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+});
+
+// MP4 conversion function
+async function convertToMP4(inputBuffer, originalExtension) {
+    return new Promise(async (resolve, reject) => {
+        const tempInputPath = path.join(__dirname, 'temp', `input_${uuidv4()}${originalExtension}`);
+        const tempOutputPath = path.join(__dirname, 'temp', `output_${uuidv4()}.mp4`);
+
+        try {
+            const tempDir = path.join(__dirname, 'temp');
+            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+
+            await writeFile(tempInputPath, inputBuffer);
+
+            ffmpeg(tempInputPath)
+                .outputOptions(['-c:v libx264', '-c:a aac', '-movflags frag_keyframe+empty_moov'])
+                .output(tempOutputPath)
+                .on('error', async (err) => {
+                    await unlink(tempInputPath).catch(() => {});
+                    await unlink(tempOutputPath).catch(() => {});
+                    reject(err);
+                })
+                .on('end', async () => {
+                    const convertedBuffer = fs.readFileSync(tempOutputPath);
+                    await unlink(tempInputPath).catch(() => {});
+                    await unlink(tempOutputPath).catch(() => {});
+                    resolve(convertedBuffer);
+                })
+                .run();
+        } catch (error) {
+            await unlink(tempInputPath).catch(() => {});
+            await unlink(tempOutputPath).catch(() => {});
+            reject(error);
+        }
+    });
+}
 
 function decodeHTMLEntities(text) {
     if (typeof text !== 'string') return text;
@@ -22,18 +72,22 @@ function decodeHTMLEntities(text) {
 // HTML entity decoding middleware
 const decodeShowData = (req, res, next) => {
     try {
-        if (req.body.showDetails) {
-            // Decode show details
+        if (req.body.showsDetailsData && typeof req.body.showsDetailsData === 'string') {
+            req.body.showsDetailsData = JSON.parse(req.body.showsDetailsData);
+        }
+
+        const showsDetailsData = req.body.showsDetailsData;
+        
+        if (showsDetailsData && showsDetailsData.showDetails) {
             ['name', 'overview', 'genres'].forEach(field => {
-                if (req.body.showDetails[field]) {
-                    req.body.showDetails[field] = decodeHTMLEntities(req.body.showDetails[field]);
+                if (showsDetailsData.showDetails[field]) {
+                    showsDetailsData.showDetails[field] = decodeHTMLEntities(showsDetailsData.showDetails[field]);
                 }
             });
         }
         
-        if (req.body.seasons) {
-            // Decode seasons and episodes
-            req.body.seasons.forEach(season => {
+        if (showsDetailsData && showsDetailsData.seasons) {
+            showsDetailsData.seasons.forEach(season => {
                 if (season.episodes) {
                     season.episodes.forEach(episode => {
                         ['name', 'overview'].forEach(field => {
@@ -45,6 +99,9 @@ const decodeShowData = (req, res, next) => {
                 }
             });
         }
+        
+        req.body = showsDetailsData;
+        
         next();
     } catch (error) {
         console.error('Error decoding HTML entities:', error);
@@ -52,7 +109,80 @@ const decodeShowData = (req, res, next) => {
     }
 };
 
+// S3 upload endpoint for shows with MP4 conversion
+router.post('/upload-show-to-s3', upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'No file uploaded' 
+            });
+        }
 
+        const { showName, season, episode } = req.body;
+        
+        // Check if conversion needed
+        const fileExtension = '.' + req.file.originalname.split('.').pop().toLowerCase();
+        const videoFormats = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp'];
+        const isConvertibleVideo = videoFormats.includes(fileExtension);
+
+        let uploadBuffer = req.file.buffer;
+        let finalExtension = fileExtension;
+        let finalContentType = 'video/mp4';
+
+        // Convert to MP4
+        if (isConvertibleVideo) {
+            console.log(`Converting ${fileExtension} to MP4...`);
+            try {
+                const convertedBuffer = await convertToMP4(req.file.buffer, fileExtension);
+                uploadBuffer = convertedBuffer;
+                finalExtension = '.mp4';
+                console.log('Conversion to MP4 successful');
+            } catch (conversionError) {
+                console.error('Conversion failed:', conversionError);
+            }
+        }
+
+        // Generate S3 key
+        let s3Key = '';
+        if (showName && season && episode) {
+            s3Key = `videos/shows/${showName.replace(/[^a-zA-Z0-9]/g, '_')}/season_${season}/episode_${episode}_${uuidv4()}${finalExtension}`;
+        } else {
+            s3Key = `videos/shows/${uuidv4()}${finalExtension}`;
+        }
+
+        const uploadParams = {
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: s3Key,
+            Body: uploadBuffer,
+            ContentType: finalContentType,
+            ContentDisposition: 'inline',
+            CacheControl: 'public, max-age=31536000'
+        };
+
+        const uploadResult = await s3.upload(uploadParams).promise();
+        
+        console.log(`Show file uploaded to S3: ${uploadResult.Location}`);
+        
+        res.json({
+            success: true,
+            url: uploadResult.Location,
+            key: uploadResult.Key,
+            size: uploadBuffer.length,
+            type: finalContentType,
+            converted: isConvertibleVideo
+        });
+
+    } catch (error) {
+        console.error('S3 upload error for show:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to upload file to S3'
+        });
+    }
+});
+
+// Your existing routes...
 router.post('/fetch-shows', async (req, res) => {
     let search_term = req.body.searchTerm;
     console.log("Search Term is",search_term)
@@ -69,23 +199,18 @@ router.post('/fetch-shows', async (req, res) => {
 
         const responseData = await fetch(url, options);
         const result = await responseData.json();
-        // console.log("TV Shows", result);
 
-        // Check if any results were found
         if (result.results.length === 0) {
             return res.status(404).json({ error: 'No TV Shows found with the given search term' });
         }
 
-        // Render the page with a list of movies and posters
         res.render('addShowsList', { showsList: result.results });
-        // res.json(result)
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch TV Show details' });
     }
 });
 
-// Create a new route for handling movie selection
 router.get('/addShows/:showID', async (req, res) => {
     const showID = req.params.showID;
 
@@ -112,21 +237,16 @@ router.get('/addShows/:showID', async (req, res) => {
 
         console.log("TV Shows Details", showsDetails)
 
-        // Render the addMovie page with the details of the selected movie
-        // res.render('addMovie', { movieDetails });
-
-
         const numOfSeasons = showsDetails.number_of_seasons
         console.log("Number of seasons",numOfSeasons)
 
         showsDetails.seasons = [];
 
         for (let i = 1; i <= numOfSeasons; i++) {
-
             const seasonUrl = `https://api.themoviedb.org/3/tv/${showID}/season/${i}?language=en-US`;
             const response = await fetch(seasonUrl, options);
             const seasonData = await response.json();
-            // console.log("Season Data", seasonData)
+            
             const episodes = seasonData.episodes.map(episode => ({
                 episode_number: episode.episode_number,
                 name: episode.name,
@@ -154,24 +274,89 @@ router.get('/addShows/:showID', async (req, res) => {
             seasons: showsDetails.seasons
         };
 
-        // res.json(selectedShowDetails)
-        res.render('addShows', { showsDetails:selectedShowDetails })
+        res.render('addShows', { showsDetails: selectedShowDetails })
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch TV Shows details' });
     }
 });
 
-
-
-router.post('/add-show-details', decodeShowData, async (req, res) => {
+// Update the add-show-details route with MP4 conversion
+router.post('/add-show-details', upload.any(), decodeShowData, async (req, res) => {
     try {
         const showsDetailsData = req.body;
 
-        console.log("Show Details on adding (DECODED):", showsDetailsData)
+        console.log("Show Details on adding (DECODED):", showsDetailsData);
+
+        // Process download links for episodes
+        const processedSeasons = await Promise.all(
+            showsDetailsData.seasons.map(async (season) => {
+                const processedEpisodes = await Promise.all(
+                    season.episodes.map(async (episode) => {
+                        let downloadLinkUrl = episode.downloadLink;
+                        
+                        // Check if there's a file upload for this episode
+                        const uploadedFile = req.files.find(file => 
+                            file.fieldname === `file_edl${season.season_number}${episode.episode_number}`
+                        );
+
+                        if (uploadedFile) {
+                            try {
+                                // Convert video to MP4 before upload
+                                const fileExtension = '.' + uploadedFile.originalname.split('.').pop().toLowerCase();
+                                const videoFormats = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp'];
+                                const isConvertibleVideo = videoFormats.includes(fileExtension);
+
+                                let uploadBuffer = uploadedFile.buffer;
+                                let finalExtension = fileExtension;
+
+                                if (isConvertibleVideo) {
+                                    console.log(`Converting episode ${episode.episode_number} to MP4...`);
+                                    try {
+                                        const convertedBuffer = await convertToMP4(uploadedFile.buffer, fileExtension);
+                                        uploadBuffer = convertedBuffer;
+                                        finalExtension = '.mp4';
+                                    } catch (conversionError) {
+                                        console.error(`Conversion failed for episode ${episode.episode_number}:`, conversionError);
+                                    }
+                                }
+
+                                const uploadParams = {
+                                    Bucket: process.env.AWS_BUCKET_NAME,
+                                    Key: `videos/shows/${showsDetailsData.showDetails.showDirName || showsDetailsData.showDetails.name}/season_${season.season_number}/episode_${episode.episode_number}_${uuidv4()}${finalExtension}`,
+                                    Body: uploadBuffer,
+                                    ContentType: 'video/mp4',
+                                    ContentDisposition: 'inline',
+                                    CacheControl: 'public, max-age=31536000'
+                                };
+
+                                const uploadResult = await s3.upload(uploadParams).promise();
+                                downloadLinkUrl = uploadResult.Location;
+                                console.log(`Episode ${episode.episode_number} file uploaded to S3:`, downloadLinkUrl);
+                            } catch (uploadError) {
+                                console.error(`Failed to upload episode ${episode.episode_number}:`, uploadError);
+                            }
+                        }
+
+                        return {
+                            episode_number: Number(episode.episode_number),
+                            name: episode.name,
+                            runtime: Number(episode.runtime),
+                            overview: episode.overview,
+                            poster: episode.poster || "",
+                            downloadLink: downloadLinkUrl
+                        };
+                    })
+                );
+
+                return {
+                    season_number: Number(season.season_number),
+                    episodes: processedEpisodes
+                };
+            })
+        );
 
         const newShowsDocument = new Shows({
-            // Remove the replaceAll since we're now properly decoding
             genres: Array.isArray(showsDetailsData.showDetails.genres) 
                 ? showsDetailsData.showDetails.genres 
                 : showsDetailsData.showDetails.genres.split(',').map(genre => genre.trim()),
@@ -183,27 +368,20 @@ router.post('/add-show-details', decodeShowData, async (req, res) => {
             ratings: Number(showsDetailsData.showDetails.vote_average),
             ignoreTitleOnScan: showsDetailsData.showDetails.ignoreTitleOnScan,
             showDirName: showsDetailsData.showDetails.showDirName,
-            seasons: showsDetailsData.seasons.map(season => ({
-                season_number: Number(season.season_number),
-                episodes: season.episodes.map(episode => ({
-                    episode_number: Number(episode.episode_number),
-                    name: episode.name,
-                    runtime: Number(episode.runtime),
-                    overview: episode.overview,
-                    poster: episode.poster,
-                    downloadLink: episode.downloadLink
-                }))
-            }))
+            seasons: processedSeasons
         });
 
-        // Save the document to the database
         const savedShows = await newShowsDocument.save();
 
         console.log('Shows details saved successfully:', savedShows);
         res.json({ success: true })
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Failed to submit show details' });
+        console.error('Error saving show:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to submit show details',
+            details: error.message 
+        });
     }
 });
 

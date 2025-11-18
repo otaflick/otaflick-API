@@ -12,18 +12,33 @@
     <h1 style="text-align: center;">TV Show Details</h1>
     <a href="/">Go to Dashboard</a>
 
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; z-index: 1000; justify-content: center; align-items: center; flex-direction: column;">
+        <div style="text-align: center;">
+            <h2 id="overallStatus">Uploading Files to S3...</h2>
+            <div style="width: 300px; height: 20px; background: #333; border-radius: 10px; margin: 20px auto;">
+                <div id="progressBar"
+                    style="width: 0%; height: 100%; background: #4CAF50; border-radius: 10px; transition: width 0.3s;">
+                </div>
+            </div>
+            <p id="progressText">0%</p>
+            <p id="fileStatus">Preparing upload...</p>
+            <p id="uploadSpeed" style="font-size: 0.8em; color: #ccc;"></p>
+        </div>
+    </div>
+
     <div class="showDetailsContainer">
         <div class="posterContainer">
             <img src="{{showsDetails.poster_path}}" alt="Show Poster">
         </div>
 
         <div class="detailsTextContainer">
-            <h2>{{{showsDetails.name}}}</h2>
-            <p style="font-size: 0.8em; margin-bottom:5px">{{{showsDetails.overview}}}</p>
-            <p style="font-size: 0.8em; font-weight: bold;">{{showsDetails.first_air_date}} • {{{showsDetails.genres}}} •
-                {{showsDetails.vote_average}}/10</p>
+            <h2>{{showsDetails.name}}</h2>
+            <p style="font-size: 0.8em; margin-bottom:5px">{{showsDetails.overview}}</p>
+            <p style="font-size: 0.8em; font-weight: bold;">{{showsDetails.first_air_date}} • {{showsDetails.genres}} • {{showsDetails.vote_average}}/10</p>
 
-        <label style="font-size: 0.8em; margin-bottom:5px" for="ignoreTitleOnScan">Ignore this show on Scan:</label>
+            <label style="font-size: 0.8em; margin-bottom:5px" for="ignoreTitleOnScan">Ignore this show on Scan:</label>
             <select id="ignoreTitleOnScan" name="ignoreTitleOnScan">
                 <option value="false">False</option>
                 <option value="true">True</option>
@@ -36,29 +51,40 @@
         </div>
     </div>
 
-
-
     {{#each showsDetails.seasons}}
     <div class="seasonContainer">
         <h3 class="seasonNum">Season {{this.season_number}}</h3>
         <div>
             {{#each this.episodes}}
             <div class="episodeDetailsContainer">
-                <!-- Include episode poster if available -->
                 {{#if this.poster}}
                 <div class="episodePosterContainer">
                     <img src="{{this.poster}}" alt="Episode Poster" style="max-width: 100px;">
                 </div>
                 {{/if}}
                 <div class="episodedetailsTextContainer">
-                    <strong>Episode {{this.episode_number}}:</strong> {{{this.name}}} ({{this.runtime}} mins)
-                    <p>{{{this.overview}}}</p>
+                    <strong>Episode {{this.episode_number}}:</strong> {{this.name}} ({{this.runtime}} mins)
+                    <p>{{this.overview}}</p>
 
-                    <!-- Add a textbox for the download link for each episode -->
-                    <label for="episodeDownloadLink">Download Link:</label>
+                    <!-- Text input for download link -->
+                    <label for="episodeDownloadLink">Download Link (URL):</label>
                     <input type="text" id="edl{{../season_number}}{{this.episode_number}}"
                         name="edl{{../season_number}}{{this.episode_number}}" value="{{this.downloadLink}}"
-                        placeholder="Enter download link" /><br>
+                        placeholder="Enter download URL" /><br>
+
+                    <!-- File upload for S3 -->
+                    <label for="file_edl{{../season_number}}{{this.episode_number}}">Or Upload File:</label>
+                    <input type="file" id="file_edl{{../season_number}}{{this.episode_number}}"
+                        name="file_edl{{../season_number}}{{this.episode_number}}"
+                        accept=".torrent,.magnet,.txt,.json,.download,.link,.mkv,.mp4,.avi,.mov,.wmv,.flv,.webm,.m4v,.3gp"
+                        data-season="{{../season_number}}" data-episode="{{this.episode_number}}"
+                        class="file-upload-input" />
+                    <small style="color: #666;">Supported: .torrent, .magnet, .txt, .json, .mkv, .mp4, .avi, .mov, .wmv, .flv, .webm</small>
+
+                    <div class="file-info" id="fileInfo_edl{{../season_number}}{{this.episode_number}}"
+                        style="display: none; font-size: 0.7em; color: #666;">
+                        No file selected
+                    </div>
                 </div>
             </div>
             {{/each}}
@@ -66,10 +92,7 @@
     </div>
     {{/each}}
 
-
     <button class="submit-btn" type="button" id="submitShowButton">Add TV Show</button>
-
-
 
     {{#if errorMessage}}
     <p style="color: red;">{{errorMessage}}</p>
@@ -79,135 +102,350 @@
     <p style="color: green;">{{successMessage}}</p>
     {{/if}}
 
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const ignoreTitleSelect = document.getElementById('ignoreTitleOnScan');
-        const showDirNameContainer = document.getElementById('showDirNameContainer');
-        
-        if (ignoreTitleSelect) {
-            ignoreTitleSelect.addEventListener('change', function () {
-                if (this.value === 'true') {
-                    showDirNameContainer.style.display = 'block';
-                } else {
-                    showDirNameContainer.style.display = 'none';
-                }
+    <script>
+        // Function to update progress
+        function updateProgress(percentage, status = '', overallStatus = '') {
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const fileStatus = document.getElementById('fileStatus');
+            const overallStatusElement = document.getElementById('overallStatus');
+            
+            progressBar.style.width = `${percentage}%`;
+            progressText.textContent = `${Math.round(percentage)}%`;
+            if (status) {
+                fileStatus.textContent = status;
+            }
+            if (overallStatus) {
+                overallStatusElement.textContent = overallStatus;
+            }
+        }
+
+        // XMLHttpRequest with progress tracking
+        function uploadWithProgress(url, formData) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                const startTime = Date.now();
+
+                xhr.upload.addEventListener('progress', (event) => {
+                    if (event.lengthComputable) {
+                        const percentComplete = (event.loaded / event.total) * 100;
+                        updateProgress(
+                            percentComplete, 
+                            `Uploading: ${Math.round(percentComplete)}%`,
+                            'Uploading to S3...'
+                        );
+                    }
+                });
+
+                xhr.addEventListener('load', () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try {
+                            const response = JSON.parse(xhr.responseText);
+                            resolve(response);
+                        } catch (e) {
+                            reject(new Error('Invalid JSON response'));
+                        }
+                    } else {
+                        reject(new Error(`Upload failed with status ${xhr.status}`));
+                    }
+                });
+
+                xhr.addEventListener('error', () => {
+                    reject(new Error('Upload failed due to network error'));
+                });
+
+                xhr.addEventListener('abort', () => {
+                    reject(new Error('Upload was cancelled'));
+                });
+
+                xhr.open('POST', url);
+                xhr.send(formData);
             });
-            ignoreTitleSelect.dispatchEvent(new Event('change'));
         }
 
-        const submitButton = document.getElementById('submitShowButton');
-        if (submitButton) {
-            submitButton.addEventListener('click', submitShowsDetails);
-        }
-    });
+        document.addEventListener('DOMContentLoaded', function () {
+            // File input handlers
+            const fileInputs = document.querySelectorAll('.file-upload-input');
+            fileInputs.forEach(input => {
+                input.addEventListener('change', function (e) {
+                    const fileInfo = document.getElementById(`fileInfo_${this.id}`);
+                    if (this.files.length > 0) {
+                        const file = this.files[0];
+                        const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+                        fileInfo.innerHTML = `Selected: ${file.name} (${fileSizeMB} MB)`;
+                        fileInfo.style.display = 'block';
 
-    function submitShowsDetails() {
-        var ignoreTitleOnScanValue = document.getElementById('ignoreTitleOnScan').value;
-        var showDirNameValue = ignoreTitleOnScanValue === 'true' ? document.getElementById('showDirName').value : '';
-        
-        var showsDetailsData = {
-            showDetails: {
-                poster_path: "{{showsDetails.poster_path}}",
-                backdrop_path: "{{showsDetails.backdrop_path}}",
-                name: "{{jsString showsDetails.name}}",
-                overview: "{{jsString showsDetails.overview}}",
-                first_air_date: "{{showsDetails.first_air_date}}",
-                genres: "{{jsString showsDetails.genres}}",
-                vote_average: "{{showsDetails.vote_average}}",
-                ignoreTitleOnScan: ignoreTitleOnScanValue,
-                showDirName: showDirNameValue
-            },
-            seasons: []
-        };
+                        // Clear text input
+                        const season = this.dataset.season;
+                        const episode = this.dataset.episode;
+                        const textInput = document.getElementById(`edl${season}${episode}`);
+                        if (textInput) {
+                            textInput.value = '';
+                        }
+                    } else {
+                        fileInfo.style.display = 'none';
+                    }
+                });
+            });
 
-        {{#each showsDetails.seasons}}
-        var seasonData = {
-            season_number: "{{this.season_number}}",
-            episodes: []
-        };
+            const ignoreTitleSelect = document.getElementById('ignoreTitleOnScan');
+            const showDirNameContainer = document.getElementById('showDirNameContainer');
 
-        {{#each this.episodes}}
-        var episodeData = {
-            episode_number: "{{this.episode_number}}",
-            name: "{{jsString this.name}}",
-            runtime: "{{this.runtime}}",
-            overview: "{{jsString this.overview}}",
-            poster: "{{this.poster}}",
-            downloadLink: document.getElementById("edl{{../season_number}}{{this.episode_number}}").value
-        };
+            if (ignoreTitleSelect) {
+                ignoreTitleSelect.addEventListener('change', function () {
+                    if (this.value === 'true') {
+                        showDirNameContainer.style.display = 'block';
+                    } else {
+                        showDirNameContainer.style.display = 'none';
+                    }
+                });
+                ignoreTitleSelect.dispatchEvent(new Event('change'));
+            }
 
-        seasonData.episodes.push(episodeData);
-        {{/each}}
+            const submitButton = document.getElementById('submitShowButton');
+            if (submitButton) {
+                submitButton.addEventListener('click', submitShowsDetails);
+            }
+        });
 
-        showsDetailsData.seasons.push(seasonData);
-        {{/each}}
+        async function submitShowsDetails() {
+            const submitButton = document.getElementById('submitShowButton');
+            submitButton.disabled = true;
+            submitButton.textContent = 'Uploading...';
 
-        console.log("Shows Details on button clicked", showsDetailsData);
+            // Show loading overlay
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            const uploadSpeedElement = document.getElementById('uploadSpeed');
+            
+            loadingOverlay.style.display = 'flex';
+            updateProgress(0, 'Preparing upload...', 'Starting upload process...');
+            uploadSpeedElement.textContent = '';
 
-        fetch('/add-show-details', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(showsDetailsData),
-        })
-            .then(response => response.json())
-            .then(data => {
+            try {
+                const ignoreTitleOnScanValue = document.getElementById('ignoreTitleOnScan').value;
+                const showDirNameValue = ignoreTitleOnScanValue === 'true' ? document.getElementById('showDirName').value : '';
+
+                // Create form data for the entire submission
+                const formData = new FormData();
+                
+                // Add show details
+                const showsDetailsData = {
+                    showDetails: {
+                        poster_path: "{{showsDetails.poster_path}}",
+                        backdrop_path: "{{showsDetails.backdrop_path}}",
+                        name: "{{showsDetails.name}}",
+                        overview: "{{showsDetails.overview}}",
+                        first_air_date: "{{showsDetails.first_air_date}}",
+                        genres: "{{showsDetails.genres}}",
+                        vote_average: "{{showsDetails.vote_average}}",
+                        ignoreTitleOnScan: ignoreTitleOnScanValue,
+                        showDirName: showDirNameValue
+                    },
+                    seasons: []
+                };
+
+                // Collect all file uploads and episode data
+                const fileInputs = document.querySelectorAll('.file-upload-input');
+                let totalFiles = 0;
+                let uploadedFiles = 0;
+
+                // First, count total files and add them to formData
+                fileInputs.forEach(input => {
+                    if (input.files.length > 0) {
+                        totalFiles++;
+                        formData.append(input.name, input.files[0]);
+                    }
+                });
+
+                // Process each season and episode
+                const seasonElements = document.querySelectorAll('.seasonContainer');
+                
+                for (const seasonElement of seasonElements) {
+                    const seasonNumber = seasonElement.querySelector('.seasonNum').textContent.replace('Season ', '');
+                    const seasonData = {
+                        season_number: seasonNumber,
+                        episodes: []
+                    };
+
+                    const episodeElements = seasonElement.querySelectorAll('.episodeDetailsContainer');
+                    
+                    for (const episodeElement of episodeElements) {
+                        const episodeNumber = episodeElement.querySelector('strong').textContent.match(/Episode (\d+)/)[1];
+                        const episodeName = episodeElement.querySelector('strong').textContent.split(':')[1]?.trim() || '';
+                        const runtimeMatch = episodeElement.querySelector('strong').textContent.match(/\((\d+) mins\)/);
+                        const runtime = runtimeMatch ? runtimeMatch[1] : '0';
+                        const overview = episodeElement.querySelector('p').textContent;
+                        
+                        // Get download link from input
+                        const downloadInput = document.getElementById(`edl${seasonNumber}${episodeNumber}`);
+                        let downloadLink = downloadInput ? downloadInput.value : '';
+
+                        // Check if there's a file to upload for this episode
+                        const fileInput = document.getElementById(`file_edl${seasonNumber}${episodeNumber}`);
+                        if (fileInput && fileInput.files.length > 0) {
+                            const file = fileInput.files[0];
+                            
+                            updateProgress(
+                                (uploadedFiles / totalFiles) * 100,
+                                `Uploading: ${file.name}`,
+                                'Uploading episode files...'
+                            );
+
+                            // Upload file to S3
+                            const fileFormData = new FormData();
+                            fileFormData.append('file', file);
+                            fileFormData.append('showName', showsDetailsData.showDetails.name);
+                            fileFormData.append('season', seasonNumber);
+                            fileFormData.append('episode', episodeNumber);
+
+                            try {
+                                const uploadResponse = await uploadWithProgress('/upload-show-to-s3', fileFormData);
+                                
+                                if (uploadResponse.success) {
+                                    downloadLink = uploadResponse.url;
+                                    console.log(`Episode ${episodeNumber} file uploaded to S3: ${downloadLink}`);
+                                } else {
+                                    console.error(`Failed to upload episode ${episodeNumber}:`, uploadResponse.error);
+                                }
+                            } catch (uploadError) {
+                                console.error(`Upload failed for episode ${episodeNumber}:`, uploadError);
+                            }
+
+                            uploadedFiles++;
+                        }
+
+                        const episodeData = {
+                            episode_number: episodeNumber,
+                            name: episodeName,
+                            runtime: runtime,
+                            overview: overview,
+                            poster: "", // We'll get this from the original data
+                            downloadLink: downloadLink
+                        };
+
+                        seasonData.episodes.push(episodeData);
+                    }
+
+                    showsDetailsData.seasons.push(seasonData);
+                }
+
+                // Add the JSON data to formData
+                formData.append('showsDetailsData', JSON.stringify(showsDetailsData));
+
+                console.log("Shows Details with S3 URLs", showsDetailsData);
+
+                // Submit the final data
+                updateProgress(100, 'Saving show to database...', 'Finalizing...');
+
+                const response = await fetch('/add-show-details', {
+                    method: 'POST',
+                    body: formData // Send as FormData to include files
+                });
+
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+
+                const data = await response.json();
                 console.log('Success:', data);
+
                 if (data.success) {
-                    alert("Show has been added successfully!!")
+                    alert("Show has been added successfully!!");
                 } else {
-                    alert("Failed to add the show!!")
+                    throw new Error(data.error || 'Failed to add the show');
                 }
-            })
-            .catch((error) => {
+
+            } catch (error) {
                 console.error('Error:', error);
-            });
-    }
-</script>
+                updateProgress(0, `Error: ${error.message}`, 'Upload Failed');
+                alert(`Error: ${error.message}`);
+            } finally {
+                loadingOverlay.style.display = 'none';
+                submitButton.disabled = false;
+                submitButton.textContent = 'Add TV Show';
+            }
+        }
+    </script>
 
-<style>
-    .showDetailsContainer {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        max-width: 800px;
-        margin: 0 auto;
-    }
+    <style>
+        .showDetailsContainer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            max-width: 800px;
+            margin: 0 auto;
+        }
 
-    .seasonNum {
-        text-align: center;
-    }
+        .seasonNum {
+            text-align: center;
+        }
 
-    .episodeDetailsContainer {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        max-width: 800px;
-        margin: 0 auto;
-        border-bottom: 1px solid black;
-        margin-top: 10px;
-    }
+        .episodeDetailsContainer {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            max-width: 800px;
+            margin: 0 auto;
+            border-bottom: 1px solid black;
+            margin-top: 10px;
+            padding: 10px;
+        }
 
-    .episodePosterContainer {
-        flex-shrink: 0;
-    }
+        .episodePosterContainer {
+            flex-shrink: 0;
+        }
 
-    .episodePosterContainer img {
-        max-width: 100%;
-        height: auto;
-    }
+        .episodePosterContainer img {
+            max-width: 100%;
+            height: auto;
+        }
 
-    .episodedetailsTextContainer {
-        flex-grow: 1;
-        margin-left: 20px;
-        margin-bottom: 25px;
-        font-size: 0.8em;
-    }
+        .episodedetailsTextContainer {
+            flex-grow: 1;
+            margin-left: 20px;
+            margin-bottom: 25px;
+            font-size: 0.8em;
+        }
 
-    .episodedetailsTextContainer h2 {
-        margin-top: 0;
-    }
-</style>
+        .episodedetailsTextContainer h2 {
+            margin-top: 0;
+        }
 
+        .file-upload-input {
+            margin: 5px 0;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100%;
+        }
+
+        .file-info {
+            margin-top: 5px;
+            padding: 5px;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+
+        .submit-btn {
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 15px;
+        }
+
+        .submit-btn:hover {
+            background-color: #45a049;
+        }
+
+        .submit-btn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+    </style>
+
+</body>
 </html>

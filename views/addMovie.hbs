@@ -12,6 +12,25 @@
     <h1 style="text-align: center;">Add Movie</h1>
     <a href="/">Go to Dashboard</a>
 
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; z-index: 1000; justify-content: center; align-items: center; flex-direction: column;">
+        <div style="text-align: center;">
+            <h2 id="overallStatus">Uploading Files to S3...</h2>
+            <div style="width: 300px; height: 20px; background: #333; border-radius: 10px; margin: 20px auto;">
+                <div id="progressBar"
+                    style="width: 0%; height: 100%; background: #4CAF50; border-radius: 10px; transition: width 0.3s;">
+                </div>
+            </div>
+            <p id="progressText">0%</p>
+            <p id="fileStatus">Preparing upload...</p>
+            <p id="uploadSpeed" style="font-size: 0.8em; color: #ccc;"></p>
+            <button id="cancelButton" style="margin-top: 20px; padding: 8px 16px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; display: none;">
+                Cancel Upload
+            </button>
+        </div>
+    </div>
+
     <div class="movieDetailsContainer">
         <div class="posterContainer">
             <img src="https://image.tmdb.org/t/p/original/{{movieDetails.poster_path}}" alt="Movie Poster">
@@ -20,77 +39,87 @@
         <div class="detailsTextContainer">
             <h2>{{movieDetails.title}}</h2>
             <p style="font-size: 0.8em; margin-bottom:5px">{{movieDetails.overview}}</p>
-            <p style="font-size: 0.8em; font-weight: bold;">{{movieDetails.release_date}} • {{movieDetails.genres}} • {{movieDetails.runtime}}mins</p>
+            <p style="font-size: 0.8em; font-weight: bold;">{{movieDetails.release_date}} • {{movieDetails.genres}} •
+                {{movieDetails.runtime}}mins</p>
         </div>
     </div>
 
-
-    <form class="formContainer" action="/add-movie-details" method="post">
-
-        <label for="id">MovieID:</label>
-        <input type="text" id="id" name="id" value="{{movieDetails.id}}" /><br>
+    <form class="formContainer" id="movieForm">
+        <!-- All fields visible as text inputs -->
+        <label for="id">Movie ID:</label>
+        <input type="text" id="id" name="id" value="{{movieDetails.id}}" readonly /><br>
 
         <label for="title">Title:</label>
-        <input type="text" id="title" name="title" value="{{movieDetails.title}}" /><br>
+        <input type="text" id="title" name="title" value="{{movieDetails.title}}" readonly /><br>
 
         <label for="originalTitle">Original Title:</label>
-        <input type="text" id="originalTitle" name="original_title" value="{{movieDetails.original_title}}" /><br>
+        <input type="text" id="originalTitle" name="original_title" value="{{movieDetails.original_title}}" readonly /><br>
 
         <label for="overview">Overview:</label>
-        <input type="text" id="overview" name="overview" value="{{movieDetails.overview}}" /><br>
+        <textarea id="overview" name="overview" readonly style="width: 100%; height: 80px;">{{movieDetails.overview}}</textarea><br>
 
         <label for="ratings">Ratings:</label>
-        <input type="text" id="ratings" name="ratings" value="{{movieDetails.vote_average}}" /><br>
+        <input type="text" id="ratings" name="ratings" value="{{movieDetails.vote_average}}" readonly /><br>
 
         <label for="backdropPath">Backdrop Path:</label>
-        <input type="text" id="backdropPath" name="backdrop_path" value="{{movieDetails.backdrop_path}}" /><br>
+        <input type="text" id="backdropPath" name="backdrop_path" value="{{movieDetails.backdrop_path}}" readonly /><br>
 
-        <label for="genreIds">Genre ID:</label>
-        <input type="text" id="genreIds" name="genreIds" value="{{movieDetails.genreIds}}" /><br>
+        <label for="genreIds">Genre IDs:</label>
+        <input type="text" id="genreIds" name="genreIds" value="{{movieDetails.genreIds}}" readonly /><br>
 
         <label for="genres">Genres:</label>
-        <input type="text" id="genres" name="genres" value="{{movieDetails.genres}}" /><br>
+        <input type="text" id="genres" name="genres" value="{{movieDetails.genres}}" readonly /><br>
 
         <label for="budget">Budget:</label>
-        <input type="text" id="budget" name="budget" value="{{movieDetails.budget}}" /><br>
+        <input type="text" id="budget" name="budget" value="{{movieDetails.budget}}" readonly /><br>
 
         <label for="popularity">Popularity:</label>
-        <input type="text" id="popularity" name="popularity" value="{{movieDetails.popularity}}" /><br>
+        <input type="text" id="popularity" name="popularity" value="{{movieDetails.popularity}}" readonly /><br>
 
         <label for="posterPath">Poster Path:</label>
-        <input type="text" id="posterPath" name="poster_path" value="{{movieDetails.poster_path}}" /><br>
+        <input type="text" id="posterPath" name="poster_path" value="{{movieDetails.poster_path}}" readonly /><br>
 
         <label for="productionCompanies">Production Companies:</label>
-        <input type="text" id="productionCompanies" name="production_companies"
-            value="{{movieDetails.production_companies}}" /><br>
+        <input type="text" id="productionCompanies" name="production_companies" value="{{movieDetails.production_companies}}" readonly /><br>
 
         <label for="releaseDate">Release Date:</label>
-        <input type="text" id="releaseDate" name="release_date" value="{{movieDetails.release_date}}" /><br>
+        <input type="text" id="releaseDate" name="release_date" value="{{movieDetails.release_date}}" readonly /><br>
 
         <label for="revenue">Revenue:</label>
-        <input type="text" id="revenue" name="revenue" value="{{movieDetails.revenue}}" /><br>
+        <input type="text" id="revenue" name="revenue" value="{{movieDetails.revenue}}" readonly /><br>
 
         <label for="runtime">Runtime:</label>
-        <input type="text" id="runtime" name="runtime" value="{{movieDetails.runtime}}" /><br>
-
+        <input type="text" id="runtime" name="runtime" value="{{movieDetails.runtime}}" readonly /><br>
 
         <label for="status">Status:</label>
-        <input type="text" id="status" name="status" value="{{movieDetails.status}}" /><br>
+        <input type="text" id="status" name="status" value="{{movieDetails.status}}" readonly /><br>
 
         <label for="watchProviders">Watch Providers:</label>
-        <input type="text" id="watchProviders" name="watchProviders" value="{{movieDetails.watchProviders}}" /><br>
+        <input type="text" id="watchProviders" name="watchProviders" value="{{movieDetails.watchProviders}}" readonly /><br>
 
-        <label for="logos">Movie Logo:</label>
-        <input type="text" id="logos" name="logos" value="{{movieDetails.logoFilePath}}" /><br>
+        <label for="logos">Logos:</label>
+        <input type="text" id="logos" name="logos" value="{{movieDetails.logos}}" readonly /><br>
 
-        <label for="ignoreTitleOnScan">Ignore this movie on Scan:</label>
-        <input type="text" id="ignoreTitleOnScan" name="ignoreTitleOnScan" value="false" /><br>
+        <label for="ignoreTitleOnScan">Ignore on Scan:</label>
+        <input type="text" id="ignoreTitleOnScan" name="ignoreTitleOnScan" value="false" readonly /><br>
 
-        <label for="downloadLink">Download Link:</label>
-        <input type="text" id="downloadLink" name="downloadLink" placeholder="Enter download link" /><br>
-        <button class="submit-btn" type="submit">Add Movie</button>
+        <label for="downloadLink">Download Link (URL):</label>
+        <input type="text" id="downloadLink" name="downloadLink" placeholder="Enter download URL" /><br>
+
+        <!-- File upload for S3 -->
+        <label for="file_downloadLink">Or Upload File:</label>
+        <input type="file" id="file_downloadLink" name="file_downloadLink"
+            accept=".torrent,.magnet,.txt,.json,.download,.link,.mkv,.mp4,.avi,.mov,.wmv,.flv,.webm,.m4v,.3gp"
+            class="file-upload-input" />
+        <small style="color: #666;">Supported: .torrent, .magnet, .txt, .json, .mkv, .mp4, .avi, .mov, .wmv, .flv,
+            .webm</small>
+
+        <div class="file-info" id="fileInfo_file_downloadLink" style="display: none; font-size: 0.7em; color: #666;">
+            No file selected
+        </div>
+
+        <button class="submit-btn" type="button" id="submitMovieButton">Add Movie</button>
     </form>
-
 
     {{#if errorMessage}}
     <p style="color: red;">{{errorMessage}}</p>
@@ -99,6 +128,385 @@
     {{#if successMessage}}
     <p style="color: green;">{{successMessage}}</p>
     {{/if}}
+
+    <script>
+        let currentXHR = null;
+        let isUploading = false;
+
+        // Function to update progress
+        function updateProgress(percentage, status = '', overallStatus = '') {
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const fileStatus = document.getElementById('fileStatus');
+            const overallStatusElement = document.getElementById('overallStatus');
+            
+            progressBar.style.width = `${percentage}%`;
+            progressText.textContent = `${Math.round(percentage)}%`;
+            if (status) {
+                fileStatus.textContent = status;
+            }
+            if (overallStatus) {
+                overallStatusElement.textContent = overallStatus;
+            }
+        }
+
+        // Function to calculate and display upload speed
+        function calculateUploadSpeed(startTime, loaded, total) {
+            const elapsedTime = (Date.now() - startTime) / 1000; // in seconds
+            if (elapsedTime > 0) {
+                const speed = loaded / elapsedTime; // bytes per second
+                const speedMB = (speed / 1024 / 1024).toFixed(2);
+                const uploadSpeedElement = document.getElementById('uploadSpeed');
+                uploadSpeedElement.textContent = `Speed: ${speedMB} MB/s`;
+            }
+        }
+
+        // XMLHttpRequest with progress tracking
+        function uploadWithProgress(url, formData) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                currentXHR = xhr;
+                const startTime = Date.now();
+
+                xhr.upload.addEventListener('progress', (event) => {
+                    if (event.lengthComputable) {
+                        const percentComplete = (event.loaded / event.total) * 100;
+                        updateProgress(
+                            percentComplete, 
+                            `Uploading: ${Math.round(percentComplete)}%`,
+                            'Uploading to S3...'
+                        );
+                        calculateUploadSpeed(startTime, event.loaded, event.total);
+                    }
+                });
+
+                xhr.addEventListener('load', () => {
+                    currentXHR = null;
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try {
+                            const response = JSON.parse(xhr.responseText);
+                            resolve(response);
+                        } catch (e) {
+                            reject(new Error('Invalid JSON response from server'));
+                        }
+                    } else {
+                        reject(new Error(`Upload failed with status ${xhr.status}`));
+                    }
+                });
+
+                xhr.addEventListener('error', () => {
+                    currentXHR = null;
+                    reject(new Error('Upload failed due to network error'));
+                });
+
+                xhr.addEventListener('abort', () => {
+                    currentXHR = null;
+                    reject(new Error('Upload was cancelled'));
+                });
+
+                xhr.open('POST', url);
+                xhr.send(formData);
+            });
+        }
+
+        // Function to cancel upload
+        function cancelUpload() {
+            if (currentXHR) {
+                currentXHR.abort();
+                currentXHR = null;
+            }
+            isUploading = false;
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            const submitButton = document.getElementById('submitMovieButton');
+            const cancelButton = document.getElementById('cancelButton');
+            
+            loadingOverlay.style.display = 'none';
+            submitButton.disabled = false;
+            submitButton.textContent = 'Add Movie';
+            cancelButton.style.display = 'none';
+            
+            alert('Upload cancelled');
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            // File input handler
+            const fileInput = document.getElementById('file_downloadLink');
+            const fileInfo = document.getElementById('fileInfo_file_downloadLink');
+            const cancelButton = document.getElementById('cancelButton');
+
+            if (fileInput) {
+                fileInput.addEventListener('change', function (e) {
+                    if (this.files.length > 0) {
+                        const file = this.files[0];
+                        const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+                        fileInfo.innerHTML = `Selected: ${file.name} (${fileSizeMB} MB)`;
+                        fileInfo.style.display = 'block';
+
+                        // Clear text input
+                        const textInput = document.getElementById('downloadLink');
+                        if (textInput) {
+                            textInput.value = '';
+                        }
+                    } else {
+                        fileInfo.style.display = 'none';
+                    }
+                });
+            }
+
+            // Cancel button handler
+            if (cancelButton) {
+                cancelButton.addEventListener('click', cancelUpload);
+            }
+
+            const submitButton = document.getElementById('submitMovieButton');
+            if (submitButton) {
+                submitButton.addEventListener('click', submitMovieDetails);
+            }
+        });
+
+        async function submitMovieDetails() {
+            if (isUploading) return;
+            
+            isUploading = true;
+            const submitButton = document.getElementById('submitMovieButton');
+            const cancelButton = document.getElementById('cancelButton');
+            submitButton.disabled = true;
+            submitButton.textContent = 'Uploading...';
+
+            // Show loading overlay and cancel button
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            const uploadSpeedElement = document.getElementById('uploadSpeed');
+            
+            loadingOverlay.style.display = 'flex';
+            cancelButton.style.display = 'block';
+            updateProgress(0, 'Preparing upload...', 'Starting upload process...');
+            uploadSpeedElement.textContent = '';
+
+            try {
+                let downloadLink = document.getElementById('downloadLink').value;
+                let hasFileUpload = false;
+
+                // Check for file upload
+                const fileInput = document.getElementById('file_downloadLink');
+                if (fileInput && fileInput.files.length > 0) {
+                    hasFileUpload = true;
+                    const file = fileInput.files[0];
+                    const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+
+                    updateProgress(5, `Starting upload: ${file.name} (${fileSizeMB} MB)`, 'Uploading file to S3...');
+
+                    // Upload file to S3 with progress tracking and timeout
+                    const fileFormData = new FormData();
+                    fileFormData.append('file', file);
+                    fileFormData.append('key', 'movie_download');
+                    fileFormData.append('movieName', document.getElementById('title').value);
+
+                    // Add timeout for S3 upload (5 minutes)
+                    const uploadPromise = uploadWithProgress('/upload-to-s3', fileFormData);
+                    const timeoutPromise = new Promise((_, reject) => {
+                        setTimeout(() => reject(new Error('S3 upload timeout after 5 minutes')), 5 * 60 * 1000);
+                    });
+
+                    const uploadResult = await Promise.race([uploadPromise, timeoutPromise]);
+
+                    if (!uploadResult.success) {
+                        throw new Error(uploadResult.error || 'File upload failed');
+                    }
+
+                    downloadLink = uploadResult.url;
+                    console.log(`File uploaded to S3: ${downloadLink}`);
+
+                    updateProgress(100, 'File upload complete!', 'File uploaded successfully!');
+                    
+                    // Small delay to show 100% completion
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                } else {
+                    // If no file upload, just show 50% immediately
+                    updateProgress(50, 'No file to upload', 'Processing movie data...');
+                }
+
+                // Update status for database processing
+                updateProgress(hasFileUpload ? 100 : 50, 'Saving movie to database...', 'Saving to database...');
+
+                // Create movie data object
+                const movieData = {
+                    id: document.getElementById('id').value,
+                    title: document.getElementById('title').value,
+                    original_title: document.getElementById('originalTitle').value,
+                    overview: document.getElementById('overview').value,
+                    ratings: document.getElementById('ratings').value,
+                    backdrop_path: document.getElementById('backdropPath').value,
+                    genreIds: document.getElementById('genreIds').value,
+                    genres: document.getElementById('genres').value,
+                    budget: document.getElementById('budget').value,
+                    popularity: document.getElementById('popularity').value,
+                    poster_path: document.getElementById('posterPath').value,
+                    production_companies: document.getElementById('productionCompanies').value,
+                    release_date: document.getElementById('releaseDate').value,
+                    revenue: document.getElementById('revenue').value,
+                    runtime: document.getElementById('runtime').value,
+                    status: document.getElementById('status').value,
+                    watchProviders: document.getElementById('watchProviders').value,
+                    logos: document.getElementById('logos').value,
+                    ignoreTitleOnScan: document.getElementById('ignoreTitleOnScan').value,
+                    downloadLink: downloadLink
+                };
+
+                console.log("Movie Data with S3 URL", movieData);
+
+                // Show processing status
+                updateProgress(hasFileUpload ? 100 : 75, 'Connecting to database...', 'Saving movie details...');
+
+                // Add timeout for database save (30 seconds)
+                const savePromise = fetch('/add-movie-details', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(movieData),
+                });
+
+                const saveTimeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('Database save timeout after 30 seconds')), 30000);
+                });
+
+                const response = await Promise.race([savePromise, saveTimeoutPromise]);
+
+                if (!response.ok) {
+                    throw new Error(`Database save failed with status ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log('Success:', data);
+
+                if (data.success) {
+                    // Show success status briefly before closing
+                    updateProgress(100, 'Movie saved successfully!', 'Complete!');
+                    await new Promise(resolve => setTimeout(resolve, 1500));
+                    
+                    alert("Movie has been added successfully!!");
+                    // Optional: Clear form
+                    document.getElementById('downloadLink').value = '';
+                    document.getElementById('file_downloadLink').value = '';
+                    document.getElementById('fileInfo_file_downloadLink').style.display = 'none';
+                } else {
+                    throw new Error(data.error || 'Failed to add the movie');
+                }
+
+            } catch (error) {
+                console.error('Error:', error);
+                // Show error status
+                updateProgress(0, `Error: ${error.message}`, 'Upload Failed');
+                // Keep the overlay visible for a moment to show the error
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                alert(`Error: ${error.message}`);
+            } finally {
+                isUploading = false;
+                currentXHR = null;
+                loadingOverlay.style.display = 'none';
+                cancelButton.style.display = 'none';
+                submitButton.disabled = false;
+                submitButton.textContent = 'Add Movie';
+            }
+        }
+    </script>
+
+    <style>
+        .formContainer {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+
+        .formContainer label {
+            display: block;
+            margin: 10px 0 5px 0;
+            font-weight: bold;
+        }
+
+        .formContainer input[type="text"],
+        .formContainer textarea {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        .formContainer input[readonly] {
+            background-color: #f0f0f0;
+            color: #666;
+        }
+
+        .file-upload-input {
+            margin: 5px 0;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100%;
+        }
+
+        .file-info {
+            margin-top: 5px;
+            padding: 5px;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+
+        .submit-btn {
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 15px;
+        }
+
+        .submit-btn:hover {
+            background-color: #45a049;
+        }
+
+        .submit-btn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .movieDetailsContainer {
+            display: flex;
+            align-items: flex-start;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+
+        .posterContainer {
+            flex-shrink: 0;
+            margin-right: 20px;
+        }
+
+        .posterContainer img {
+            max-width: 200px;
+            border-radius: 8px;
+        }
+
+        .detailsTextContainer {
+            flex-grow: 1;
+        }
+
+        #cancelButton:hover {
+            background-color: #d32f2f;
+        }
+    </style>
+
 </body>
 
 </html>

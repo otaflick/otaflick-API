@@ -2,6 +2,57 @@ require('dotenv').config();
 const express = require('express');
 const router = express.Router()
 const Anime = require('../models/Anime')
+const s3 = require('../service/aws.s3.bucket'); 
+const { v4: uuidv4 } = require('uuid'); 
+const multer = require('multer'); 
+const ffmpeg = require('fluent-ffmpeg');
+const fs = require('fs');
+const path = require('path');
+const { promisify } = require('util');
+const writeFile = promisify(fs.writeFile);
+const unlink = promisify(fs.unlink);
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+ffmpeg.setFfmpegPath(ffmpegPath);
+
+// Configure multer for file uploads
+const upload = multer({
+  storage: multer.memoryStorage()
+});
+
+// MP4 conversion function
+async function convertToMP4(inputBuffer, originalExtension) {
+    return new Promise(async (resolve, reject) => {
+        const tempInputPath = path.join(__dirname, 'temp', `input_${uuidv4()}${originalExtension}`);
+        const tempOutputPath = path.join(__dirname, 'temp', `output_${uuidv4()}.mp4`);
+
+        try {
+            const tempDir = path.join(__dirname, 'temp');
+            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+
+            await writeFile(tempInputPath, inputBuffer);
+
+            ffmpeg(tempInputPath)
+                .outputOptions(['-c:v libx264', '-c:a aac', '-movflags frag_keyframe+empty_moov'])
+                .output(tempOutputPath)
+                .on('error', async (err) => {
+                    await unlink(tempInputPath).catch(() => {});
+                    await unlink(tempOutputPath).catch(() => {});
+                    reject(err);
+                })
+                .on('end', async () => {
+                    const convertedBuffer = fs.readFileSync(tempOutputPath);
+                    await unlink(tempInputPath).catch(() => {});
+                    await unlink(tempOutputPath).catch(() => {});
+                    resolve(convertedBuffer);
+                })
+                .run();
+        } catch (error) {
+            await unlink(tempInputPath).catch(() => {});
+            await unlink(tempOutputPath).catch(() => {});
+            reject(error);
+        }
+    });
+}
 
 function decodeHTMLEntities(text) {
     if (typeof text !== 'string') return text;
@@ -21,18 +72,22 @@ function decodeHTMLEntities(text) {
 // HTML entity decoding middleware for anime
 const decodeAnimeData = (req, res, next) => {
     try {
-        if (req.body.animeDetails) {
-            // Decode anime details
+        if (req.body.animeDetailsData && typeof req.body.animeDetailsData === 'string') {
+            req.body.animeDetailsData = JSON.parse(req.body.animeDetailsData);
+        }
+
+        const animeDetailsData = req.body.animeDetailsData;
+        
+        if (animeDetailsData && animeDetailsData.animeDetails) {
             ['name', 'overview', 'genres'].forEach(field => {
-                if (req.body.animeDetails[field]) {
-                    req.body.animeDetails[field] = decodeHTMLEntities(req.body.animeDetails[field]);
+                if (animeDetailsData.animeDetails[field]) {
+                    animeDetailsData.animeDetails[field] = decodeHTMLEntities(animeDetailsData.animeDetails[field]);
                 }
             });
         }
         
-        if (req.body.seasons) {
-            // Decode seasons and episodes
-            req.body.seasons.forEach(season => {
+        if (animeDetailsData && animeDetailsData.seasons) {
+            animeDetailsData.seasons.forEach(season => {
                 if (season.episodes) {
                     season.episodes.forEach(episode => {
                         ['name', 'overview'].forEach(field => {
@@ -44,6 +99,9 @@ const decodeAnimeData = (req, res, next) => {
                 }
             });
         }
+        
+        req.body = animeDetailsData;
+        
         next();
     } catch (error) {
         console.error('Error decoding HTML entities:', error);
@@ -51,6 +109,78 @@ const decodeAnimeData = (req, res, next) => {
     }
 };
 
+// Updated S3 upload with conversion
+router.post('/upload-anime-to-s3', upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'No file uploaded' 
+            });
+        }
+
+        const { animeName, season, episode } = req.body;
+        
+        // Check if conversion needed
+        const fileExtension = '.' + req.file.originalname.split('.').pop().toLowerCase();
+        const videoFormats = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp'];
+        const isConvertibleVideo = videoFormats.includes(fileExtension);
+
+        let uploadBuffer = req.file.buffer;
+        let finalExtension = fileExtension;
+        let finalContentType = 'video/mp4';
+
+        // Convert to MP4
+        if (isConvertibleVideo) {
+            console.log(`Converting ${fileExtension} to MP4...`);
+            try {
+                const convertedBuffer = await convertToMP4(req.file.buffer, fileExtension);
+                uploadBuffer = convertedBuffer;
+                finalExtension = '.mp4';
+                console.log('Conversion to MP4 successful');
+            } catch (conversionError) {
+                console.error('Conversion failed:', conversionError);
+            }
+        }
+
+        // Generate S3 key
+        let s3Key = '';
+        if (animeName && season && episode) {
+            s3Key = `videos/anime/${animeName.replace(/[^a-zA-Z0-9]/g, '_')}/season_${season}/episode_${episode}_${uuidv4()}${finalExtension}`;
+        } else {
+            s3Key = `videos/anime/${uuidv4()}${finalExtension}`;
+        }
+
+        const uploadParams = {
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: s3Key,
+            Body: uploadBuffer,
+            ContentType: finalContentType,
+            ContentDisposition: 'inline',
+            CacheControl: 'public, max-age=31536000'
+        };
+
+        const uploadResult = await s3.upload(uploadParams).promise();
+        
+        res.json({
+            success: true,
+            url: uploadResult.Location,
+            key: uploadResult.Key,
+            size: uploadBuffer.length,
+            type: finalContentType,
+            converted: isConvertibleVideo
+        });
+
+    } catch (error) {
+        console.error('S3 upload error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to upload file to S3'
+        });
+    }
+});
+
+// Your existing routes...
 router.post('/fetch-anime', async (req, res) => {
     let search_term = req.body.searchTerm;
     console.log("Search Term is", search_term)
@@ -67,34 +197,25 @@ router.post('/fetch-anime', async (req, res) => {
 
         const responseData = await fetch(url, options);
         const result = await responseData.json();
-        // console.log("Anime Results", result);
 
-        // Check if any results were found
-        if (result.results.length === 0) {
-            return res.status(404).json({ error: 'No anime found with the given search term' });
-        }
-
-        // Filter for anime (you might want to add more specific filtering)
+        // Filter for anime
         const animeResults = result.results.filter(show => 
-            show.genre_ids.includes(16) || // Animation genre
+            show.genre_ids.includes(16) ||
             show.name.toLowerCase().includes('anime') ||
-            show.original_language === 'ja' // Japanese origin
+            show.original_language === 'ja'
         );
 
         if (animeResults.length === 0) {
             return res.status(404).json({ error: 'No anime found with the given search term' });
         }
 
-        // Render the page with a list of anime
         res.render('addAnimeList', { animeList: animeResults });
-        // res.json(result)
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch anime details' });
     }
 });
 
-// Create a new route for handling anime selection
 router.get('/addAnime/:animeID', async (req, res) => {
     const animeID = req.params.animeID;
 
@@ -113,24 +234,19 @@ router.get('/addAnime/:animeID', async (req, res) => {
 
         const genreIds = animeDetails.genres.map(genre => genre.id);
         const genreNames = animeDetails.genres.map(genre => genre.name);
-        console.log("Genre Names are as follows", genreNames)
         animeDetails.production_companies = animeDetails.production_companies.map(company => company.name);
 
         animeDetails.genreIds = genreIds;
         animeDetails.genres = genreNames;
 
-        console.log("Anime Details", animeDetails)
-
-        const numOfSeasons = animeDetails.number_of_seasons
-        console.log("Number of seasons", numOfSeasons)
-
+        const numOfSeasons = animeDetails.number_of_seasons;
         animeDetails.seasons = [];
 
         for (let i = 1; i <= numOfSeasons; i++) {
             const seasonUrl = `https://api.themoviedb.org/3/tv/${animeID}/season/${i}?language=en-US`;
             const response = await fetch(seasonUrl, options);
             const seasonData = await response.json();
-            // console.log("Season Data", seasonData)
+            
             const episodes = seasonData.episodes.map(episode => ({
                 episode_number: episode.episode_number,
                 name: episode.name,
@@ -158,7 +274,6 @@ router.get('/addAnime/:animeID', async (req, res) => {
             seasons: animeDetails.seasons
         };
 
-        // res.json(selectedAnimeDetails)
         res.render('addAnime', { animeDetails: selectedAnimeDetails })
     } catch (error) {
         console.error(error);
@@ -166,14 +281,82 @@ router.get('/addAnime/:animeID', async (req, res) => {
     }
 });
 
-router.post('/add-anime-details', decodeAnimeData, async (req, res) => {
+// Update the add-anime-details route with MP4 conversion
+router.post('/add-anime-details', upload.any(), decodeAnimeData, async (req, res) => {
     try {
         const animeDetailsData = req.body;
 
-        console.log("Anime Details on adding (DECODED):", animeDetailsData)
+        console.log("Anime Details on adding (DECODED):", animeDetailsData);
+
+        // Process download links for episodes
+        const processedSeasons = await Promise.all(
+            animeDetailsData.seasons.map(async (season) => {
+                const processedEpisodes = await Promise.all(
+                    season.episodes.map(async (episode) => {
+                        let downloadLinkUrl = episode.downloadLink;
+                        
+                        // Check if there's a file upload for this episode
+                        const uploadedFile = req.files.find(file => 
+                            file.fieldname === `file_edl${season.season_number}${episode.episode_number}`
+                        );
+
+                        if (uploadedFile) {
+                            try {
+                                // Convert video to MP4 before upload
+                                const fileExtension = '.' + uploadedFile.originalname.split('.').pop().toLowerCase();
+                                const videoFormats = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp'];
+                                const isConvertibleVideo = videoFormats.includes(fileExtension);
+
+                                let uploadBuffer = uploadedFile.buffer;
+                                let finalExtension = fileExtension;
+
+                                if (isConvertibleVideo) {
+                                    console.log(`Converting episode ${episode.episode_number} to MP4...`);
+                                    try {
+                                        const convertedBuffer = await convertToMP4(uploadedFile.buffer, fileExtension);
+                                        uploadBuffer = convertedBuffer;
+                                        finalExtension = '.mp4';
+                                    } catch (conversionError) {
+                                        console.error(`Conversion failed for episode ${episode.episode_number}:`, conversionError);
+                                    }
+                                }
+
+                                const uploadParams = {
+                                    Bucket: process.env.AWS_BUCKET_NAME,
+                                    Key: `videos/anime/${animeDetailsData.animeDetails.showDirName || animeDetailsData.animeDetails.name}/season_${season.season_number}/episode_${episode.episode_number}_${uuidv4()}${finalExtension}`,
+                                    Body: uploadBuffer,
+                                    ContentType: 'video/mp4',
+                                    ContentDisposition: 'inline',
+                                    CacheControl: 'public, max-age=31536000'
+                                };
+
+                                const uploadResult = await s3.upload(uploadParams).promise();
+                                downloadLinkUrl = uploadResult.Location;
+                                console.log(`Anime Episode ${episode.episode_number} file uploaded to S3:`, downloadLinkUrl);
+                            } catch (uploadError) {
+                                console.error(`Failed to upload anime episode ${episode.episode_number}:`, uploadError);
+                            }
+                        }
+
+                        return {
+                            episode_number: Number(episode.episode_number),
+                            name: episode.name,
+                            runtime: Number(episode.runtime),
+                            overview: episode.overview,
+                            poster: episode.poster || "",
+                            downloadLink: downloadLinkUrl
+                        };
+                    })
+                );
+
+                return {
+                    season_number: Number(season.season_number),
+                    episodes: processedEpisodes
+                };
+            })
+        );
 
         const newAnimeDocument = new Anime({
-            // Remove the replaceAll since we're now properly decoding
             genres: Array.isArray(animeDetailsData.animeDetails.genres) 
                 ? animeDetailsData.animeDetails.genres 
                 : animeDetailsData.animeDetails.genres.split(',').map(genre => genre.trim()),
@@ -185,27 +368,20 @@ router.post('/add-anime-details', decodeAnimeData, async (req, res) => {
             ratings: Number(animeDetailsData.animeDetails.vote_average),
             ignoreTitleOnScan: animeDetailsData.animeDetails.ignoreTitleOnScan,
             showDirName: animeDetailsData.animeDetails.showDirName,
-            seasons: animeDetailsData.seasons.map(season => ({
-                season_number: Number(season.season_number),
-                episodes: season.episodes.map(episode => ({
-                    episode_number: Number(episode.episode_number),
-                    name: episode.name,
-                    runtime: Number(episode.runtime),
-                    overview: episode.overview,
-                    poster: episode.poster,
-                    downloadLink: episode.downloadLink
-                }))
-            }))
+            seasons: processedSeasons
         });
 
-        // Save the document to the database
         const savedAnime = await newAnimeDocument.save();
 
         console.log('Anime details saved successfully:', savedAnime);
         res.json({ success: true })
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Failed to submit anime details' });
+        console.error('Error saving anime:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to submit anime details',
+            details: error.message 
+        });
     }
 });
 

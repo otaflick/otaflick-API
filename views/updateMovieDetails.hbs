@@ -9,13 +9,31 @@
 </head>
 
 <body>
-    {{!-- <h1>{{movie.title}}</h1> --}}
-
     <h1>Update Movie Details</h1>
     <a href="/">Go to Dashboard</a>
+    <a href="/edit-movie-list" style="margin-left: 10px;">Back to Movie List</a>
+    
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; z-index: 1000; justify-content: center; align-items: center; flex-direction: column;">
+        <div style="text-align: center;">
+            <h2 id="overallStatus">Uploading Files to S3...</h2>
+            <div style="width: 300px; height: 20px; background: #333; border-radius: 10px; margin: 20px auto;">
+                <div id="progressBar"
+                    style="width: 0%; height: 100%; background: #4CAF50; border-radius: 10px; transition: width 0.3s;">
+                </div>
+            </div>
+            <p id="progressText">0%</p>
+            <p id="fileStatus">Preparing upload...</p>
+            <p id="uploadSpeed" style="font-size: 0.8em; color: #ccc;"></p>
+            <button id="cancelButton" style="margin-top: 20px; padding: 8px 16px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; display: none;">
+                Cancel Upload
+            </button>
+        </div>
+    </div>
+
     <div class="movieDetailsContainer">
         <div class="posterContainer">
-            {{!-- <img src="https://image.tmdb.org/t/p/original/{{movie.posterPath}}" alt="Movie Poster"> --}}
             <img alt="Movie Poster" data-poster-path="{{movie.posterPath}}">
         </div>
 
@@ -26,10 +44,9 @@
                 {{movie.runtime}}mins</p>
         </div>
     </div>
-    <form class="formContainer" action="/update-movie/{{movie._id}}" method="post">
 
-        <label for="id">ID:</label>
-        <input type="text" id="id" name="id" value="{{movie.id}}" /><br>
+    <form class="formContainer" id="updateMovieForm">
+        <input type="hidden" name="id" value="{{movie._id}}" />
 
         <label for="movieID">MovieID:</label>
         <input type="text" id="movieID" name="movieID" value="{{movie.movieID}}" /><br>
@@ -41,7 +58,7 @@
         <input type="text" id="originalTitle" name="originalTitle" value="{{movie.originalTitle}}" /><br>
 
         <label for="overview">Overview:</label>
-        <input type="text" id="overview" name="overview" value="{{movie.overview}}" /><br>
+        <textarea id="overview" name="overview" style="width: 100%; height: 80px;">{{movie.overview}}</textarea><br>
 
         <label for="ratings">Ratings:</label>
         <input type="text" id="ratings" name="ratings" value="{{movie.ratings}}" /><br>
@@ -49,7 +66,7 @@
         <label for="backdropPath">Backdrop Path:</label>
         <input type="text" id="backdropPath" name="backdropPath" value="{{movie.backdropPath}}" /><br>
 
-        <label for="genreIds">Genre ID:</label>
+        <label for="genreIds">Genre IDs:</label>
         <input type="text" id="genreIds" name="genreIds" value="{{movie.genreIds}}" /><br>
 
         <label for="genres">Genres:</label>
@@ -87,24 +104,389 @@
         <input type="text" id="logos" name="logos" value="{{movie.logos}}" /><br>
 
         <label for="ignoreTitleOnScan">Ignore this movie on Scan:</label>
-        <input type="text" id="ignoreTitleOnScan" name="ignoreTitleOnScan" value="{{movie.ignoreTitleOnScan}}" /><br>
+        <select id="ignoreTitleOnScan" name="ignoreTitleOnScan">
+            <option value="true" {{#if movie.ignoreTitleOnScan}}selected{{/if}}>Yes</option>
+            <option value="false" {{#unless movie.ignoreTitleOnScan}}selected{{/unless}}>No</option>
+        </select><br>
 
-        <label for="downloadLink">Download Link:</label>
+        <label for="downloadLink">Download Link (URL):</label>
         <input type="text" id="downloadLink" name="downloadLink" value="{{movie.downloadLink}}" /><br>
 
-        <button class="submit-btn" type="submit">Update Details</button>
+        <!-- File upload for S3 -->
+        <label for="file_downloadLink">Or Upload New File:</label>
+        <input type="file" id="file_downloadLink" name="file_downloadLink"
+            accept=".torrent,.magnet,.txt,.json,.download,.link,.mkv,.mp4,.avi,.mov,.wmv,.flv,.webm,.m4v,.3gp"
+            class="file-upload-input" />
+        <small style="color: #666;">Supported: .torrent, .magnet, .txt, .json, .mkv, .mp4, .avi, .mov, .wmv, .flv,
+            .webm</small>
+
+        <div class="file-info" id="fileInfo_file_downloadLink" style="display: none; font-size: 0.7em; color: #666;">
+            No file selected
+        </div>
+
+        <button class="submit-btn" type="button" id="updateMovieButton">Update Movie</button>
     </form>
 
     {{#if successMessage}}
-    <p style="color: green;">{{successMessage}}</p>
+    <p style="color: green; text-align: center; font-weight: bold; margin-top: 20px;">{{successMessage}}</p>
     {{/if}}
 
     <script>
-        // Get all poster images
-        const posterImage = document.querySelector('.posterContainer img');
-        const posterPath = posterImage.getAttribute('data-poster-path');
-        posterImage.src = posterPath;
+        let currentXHR = null;
+        let isUploading = false;
+
+        // Initialize poster image
+        document.addEventListener('DOMContentLoaded', function() {
+            const posterImage = document.querySelector('.posterContainer img');
+            const posterPath = posterImage.getAttribute('data-poster-path');
+            if (posterPath) {
+                posterImage.src = posterPath;
+            }
+
+            // File input handler
+            const fileInput = document.getElementById('file_downloadLink');
+            const fileInfo = document.getElementById('fileInfo_file_downloadLink');
+            const cancelButton = document.getElementById('cancelButton');
+
+            if (fileInput) {
+                fileInput.addEventListener('change', function (e) {
+                    if (this.files.length > 0) {
+                        const file = this.files[0];
+                        const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+                        fileInfo.innerHTML = `Selected: ${file.name} (${fileSizeMB} MB)`;
+                        fileInfo.style.display = 'block';
+
+                        // Clear text input when file is selected
+                        const textInput = document.getElementById('downloadLink');
+                        if (textInput) {
+                            textInput.value = '';
+                        }
+                    } else {
+                        fileInfo.style.display = 'none';
+                    }
+                });
+            }
+
+            // Cancel button handler
+            if (cancelButton) {
+                cancelButton.addEventListener('click', cancelUpload);
+            }
+
+            const updateButton = document.getElementById('updateMovieButton');
+            if (updateButton) {
+                updateButton.addEventListener('click', updateMovieDetails);
+            }
+        });
+
+        // Function to update progress
+        function updateProgress(percentage, status = '', overallStatus = '') {
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const fileStatus = document.getElementById('fileStatus');
+            const overallStatusElement = document.getElementById('overallStatus');
+            
+            progressBar.style.width = `${percentage}%`;
+            progressText.textContent = `${Math.round(percentage)}%`;
+            if (status) {
+                fileStatus.textContent = status;
+            }
+            if (overallStatus) {
+                overallStatusElement.textContent = overallStatus;
+            }
+        }
+
+        // Function to calculate and display upload speed
+        function calculateUploadSpeed(startTime, loaded, total) {
+            const elapsedTime = (Date.now() - startTime) / 1000; // in seconds
+            if (elapsedTime > 0) {
+                const speed = loaded / elapsedTime; // bytes per second
+                const speedMB = (speed / 1024 / 1024).toFixed(2);
+                const uploadSpeedElement = document.getElementById('uploadSpeed');
+                uploadSpeedElement.textContent = `Speed: ${speedMB} MB/s`;
+            }
+        }
+
+        // XMLHttpRequest with progress tracking
+        function uploadWithProgress(url, formData) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                currentXHR = xhr;
+                const startTime = Date.now();
+
+                xhr.upload.addEventListener('progress', (event) => {
+                    if (event.lengthComputable) {
+                        const percentComplete = (event.loaded / event.total) * 100;
+                        updateProgress(
+                            percentComplete, 
+                            `Uploading: ${Math.round(percentComplete)}%`,
+                            'Uploading to S3...'
+                        );
+                        calculateUploadSpeed(startTime, event.loaded, event.total);
+                    }
+                });
+
+                xhr.addEventListener('load', () => {
+                    currentXHR = null;
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try {
+                            const response = JSON.parse(xhr.responseText);
+                            resolve(response);
+                        } catch (e) {
+                            reject(new Error('Invalid JSON response from server'));
+                        }
+                    } else {
+                        reject(new Error(`Upload failed with status ${xhr.status}`));
+                    }
+                });
+
+                xhr.addEventListener('error', () => {
+                    currentXHR = null;
+                    reject(new Error('Upload failed due to network error'));
+                });
+
+                xhr.addEventListener('abort', () => {
+                    currentXHR = null;
+                    reject(new Error('Upload was cancelled'));
+                });
+
+                xhr.open('POST', url);
+                xhr.send(formData);
+            });
+        }
+
+        // Function to cancel upload
+        function cancelUpload() {
+            if (currentXHR) {
+                currentXHR.abort();
+                currentXHR = null;
+            }
+            isUploading = false;
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            const updateButton = document.getElementById('updateMovieButton');
+            const cancelButton = document.getElementById('cancelButton');
+            
+            loadingOverlay.style.display = 'none';
+            updateButton.disabled = false;
+            updateButton.textContent = 'Update Movie';
+            cancelButton.style.display = 'none';
+            
+            alert('Upload cancelled');
+        }
+
+        async function updateMovieDetails() {
+            if (isUploading) return;
+            
+            isUploading = true;
+            const updateButton = document.getElementById('updateMovieButton');
+            const cancelButton = document.getElementById('cancelButton');
+            updateButton.disabled = true;
+            updateButton.textContent = 'Updating...';
+
+            // Show loading overlay and cancel button
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            const uploadSpeedElement = document.getElementById('uploadSpeed');
+            
+            loadingOverlay.style.display = 'flex';
+            cancelButton.style.display = 'block';
+            updateProgress(0, 'Preparing update...', 'Starting update process...');
+            uploadSpeedElement.textContent = '';
+
+            try {
+                let downloadLink = document.getElementById('downloadLink').value;
+                let hasFileUpload = false;
+
+                // Check for file upload
+                const fileInput = document.getElementById('file_downloadLink');
+                if (fileInput && fileInput.files.length > 0) {
+                    hasFileUpload = true;
+                    const file = fileInput.files[0];
+                    const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+
+                    updateProgress(5, `Starting upload: ${file.name} (${fileSizeMB} MB)`, 'Uploading file to S3...');
+
+                    // Upload file to S3 with progress tracking
+                    const fileFormData = new FormData();
+                    fileFormData.append('file', file);
+                    fileFormData.append('movieName', document.getElementById('title').value);
+
+                    const uploadResult = await uploadWithProgress('/upload-to-s3-update', fileFormData);
+
+                    if (!uploadResult.success) {
+                        throw new Error(uploadResult.error || 'File upload failed');
+                    }
+
+                    downloadLink = uploadResult.url;
+                    console.log(`File uploaded to S3: ${downloadLink}`);
+
+                    updateProgress(100, 'File upload complete!', 'File uploaded successfully!');
+                    
+                    // Small delay to show 100% completion
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                } else {
+                    // If no file upload, just show progress
+                    updateProgress(50, 'No file to upload', 'Processing movie data...');
+                }
+
+                // Update status for database processing
+                updateProgress(hasFileUpload ? 100 : 75, 'Updating movie in database...', 'Saving changes...');
+
+                // Create movie data object
+                const movieData = {
+                    movieID: document.getElementById('movieID').value,
+                    title: document.getElementById('title').value,
+                    originalTitle: document.getElementById('originalTitle').value,
+                    overview: document.getElementById('overview').value,
+                    ratings: document.getElementById('ratings').value,
+                    backdropPath: document.getElementById('backdropPath').value,
+                    genreIds: document.getElementById('genreIds').value,
+                    genres: document.getElementById('genres').value,
+                    budget: document.getElementById('budget').value,
+                    popularity: document.getElementById('popularity').value,
+                    posterPath: document.getElementById('posterPath').value,
+                    productionCompanies: document.getElementById('productionCompanies').value,
+                    releaseDate: document.getElementById('releaseDate').value,
+                    revenue: document.getElementById('revenue').value,
+                    runtime: document.getElementById('runtime').value,
+                    status: document.getElementById('status').value,
+                    watchProviders: document.getElementById('watchProviders').value,
+                    logos: document.getElementById('logos').value,
+                    ignoreTitleOnScan: document.getElementById('ignoreTitleOnScan').value,
+                    downloadLink: downloadLink
+                };
+
+                console.log("Updated Movie Data:", movieData);
+
+                // Submit the form data to update the movie
+                const movieId = '{{movie._id}}';
+                const response = await fetch(`/update-movie/${movieId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams(movieData)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Update failed with status ${response.status}`);
+                }
+
+                // Show success status briefly before reloading
+                updateProgress(100, 'Movie updated successfully!', 'Complete!');
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                
+                // Reload the page to show success message
+                window.location.reload();
+
+            } catch (error) {
+                console.error('Error:', error);
+                // Show error status
+                updateProgress(0, `Error: ${error.message}`, 'Update Failed');
+                // Keep the overlay visible for a moment to show the error
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                alert(`Error: ${error.message}`);
+            } finally {
+                isUploading = false;
+                currentXHR = null;
+                loadingOverlay.style.display = 'none';
+                cancelButton.style.display = 'none';
+                updateButton.disabled = false;
+                updateButton.textContent = 'Update Movie';
+            }
+        }
     </script>
+
+    <style>
+        .formContainer {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+
+        .formContainer label {
+            display: block;
+            margin: 10px 0 5px 0;
+            font-weight: bold;
+        }
+
+        .formContainer input[type="text"],
+        .formContainer textarea,
+        .formContainer select {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        .file-upload-input {
+            margin: 5px 0;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100%;
+        }
+
+        .file-info {
+            margin-top: 5px;
+            padding: 5px;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+
+        .submit-btn {
+            background-color: #2196F3;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 15px;
+        }
+
+        .submit-btn:hover {
+            background-color: #1976D2;
+        }
+
+        .submit-btn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .movieDetailsContainer {
+            display: flex;
+            align-items: flex-start;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+
+        .posterContainer {
+            flex-shrink: 0;
+            margin-right: 20px;
+        }
+
+        .posterContainer img {
+            max-width: 200px;
+            border-radius: 8px;
+        }
+
+        .detailsTextContainer {
+            flex-grow: 1;
+        }
+
+        #cancelButton:hover {
+            background-color: #d32f2f;
+        }
+    </style>
+
 </body>
 
 </html>
