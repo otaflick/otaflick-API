@@ -270,8 +270,8 @@ const path = require('path');
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(cors());
-app.use(bodyParser.json({ limit: '1gb' }));
-app.use(bodyParser.urlencoded({ limit: '1gb', extended: true }));
+app.use(bodyParser.json({ limit: '0' }));
+app.use(bodyParser.urlencoded({ limit: '0', extended: true }));
 
 const Movie = require('./models/movie')
 
