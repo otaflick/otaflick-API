@@ -9,22 +9,21 @@ services:
     restart: always
     expose:
       - "5000"
-    environment:
-      - NODE_ENV=production
+    
     
 
-  nginx:
-    image: nginx:alpine
-    container_name: otaflick-nginx
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-    depends_on:
-      - backend
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: otaflick-nginx
+  #   restart: always
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+  #     - /etc/letsencrypt:/etc/letsencrypt:ro
+  #   depends_on:
+  #     - backend
 
 volumes:
   otaflick_mongo_data:
