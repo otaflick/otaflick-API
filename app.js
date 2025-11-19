@@ -9,20 +9,58 @@ const { Server } = require('socket.io');
 app.set('view engine', 'hbs');
 const hbs = require('hbs');
 
+// Add the missing eq helper
+hbs.registerHelper('eq', function (a, b, options) {
+    return a === b ? options.fn(this) : options.inverse(this);
+});
 
+// Also add these commonly used helpers to prevent future errors
+hbs.registerHelper('neq', function (a, b, options) {
+    return a !== b ? options.fn(this) : options.inverse(this);
+});
+
+hbs.registerHelper('gt', function (a, b, options) {
+    return a > b ? options.fn(this) : options.inverse(this);
+});
+
+hbs.registerHelper('lt', function (a, b, options) {
+    return a < b ? options.fn(this) : options.inverse(this);
+});
+
+hbs.registerHelper('gte', function (a, b, options) {
+    return a >= b ? options.fn(this) : options.inverse(this);
+});
+
+hbs.registerHelper('lte', function (a, b, options) {
+    return a <= b ? options.fn(this) : options.inverse(this);
+});
+
+hbs.registerHelper('and', function () {
+    const args = Array.prototype.slice.call(arguments, 0, -1);
+    return args.every(Boolean) ? arguments[arguments.length - 1].fn(this) : arguments[arguments.length - 1].inverse(this);
+});
+
+hbs.registerHelper('or', function () {
+    const args = Array.prototype.slice.call(arguments, 0, -1);
+    return args.some(Boolean) ? arguments[arguments.length - 1].fn(this) : arguments[arguments.length - 1].inverse(this);
+});
+
+hbs.registerHelper('not', function (a, options) {
+    return !a ? options.fn(this) : options.inverse(this);
+});
+
+// Your existing helpers
 hbs.registerHelper('includes', function (array, value) {
     return Array.isArray(array) && array.includes(value);
 });
-// Add this with your other hbs.registerHelper calls
+
 hbs.registerHelper('substr', function(str, start, length) {
     if (typeof str !== 'string') return '';
     
-    // Handle negative start (count from end)
     if (start < 0) {
         start = Math.max(0, str.length + start);
     }
     
-    // If length is provided, use substring; otherwise go to end
     if (length !== undefined) {
         return str.substring(start, start + length);
     }
@@ -30,22 +68,17 @@ hbs.registerHelper('substr', function(str, start, length) {
     return str.substring(start);
 });
 
-// Add this with your other hbs.registerHelper calls
 hbs.registerHelper('formatDate', function(date, format) {
     if (!date) return '';
     
-    // If date is a string, convert to Date object
     const dateObj = typeof date === 'string' ? new Date(date) : date;
     
-    // If it's not a valid date, return empty string
     if (isNaN(dateObj.getTime())) return '';
     
-    // Default format if none provided
     if (!format) {
         return dateObj.toLocaleDateString();
     }
     
-    // Handle different format types
     switch (format) {
         case 'short':
             return dateObj.toLocaleDateString();
@@ -77,7 +110,6 @@ hbs.registerHelper('formatDate', function(date, format) {
         case 'iso':
             return dateObj.toISOString();
         case 'relative':
-            // Relative time (e.g., "2 hours ago")
             const now = new Date();
             const diffMs = now - dateObj;
             const diffMins = Math.floor(diffMs / (1000 * 60));
@@ -91,15 +123,12 @@ hbs.registerHelper('formatDate', function(date, format) {
             
             return dateObj.toLocaleDateString();
         default:
-            // Custom format handling
             return dateObj.toLocaleDateString();
     }
 });
 
-// Add this new helper for safe JavaScript strings
 hbs.registerHelper('jsString', function(str) {
     if (typeof str !== 'string') return '';
-    // Escape quotes and backslashes for JavaScript strings
     return str
         .replace(/\\/g, '\\\\')
         .replace(/'/g, "\\'")
@@ -108,9 +137,10 @@ hbs.registerHelper('jsString', function(str) {
         .replace(/\r/g, '\\r')
         .replace(/\t/g, '\\t');
 });
+
 const port = process.env.PORT
 
-// Create HTTP server
+// Rest of your code remains the same...
 const server = http.createServer(app);
 
 // Initialize Socket.IO
@@ -122,32 +152,25 @@ const io = new Server(server, {
 });
 
 // Socket.IO connection handling
-const connectedUsers = new Map(); // Store socketId -> userId mapping
-
+const connectedUsers = new Map();
 
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
-    // Handle user registration (when user logs in) - FIXED EVENT NAME
     socket.on('register', async (data) => {
         try {
             console.log('User registering:', data);
             
-            // Extract userId from the data object
             const { userId } = data;
             
-            // Store the connection
             connectedUsers.set(socket.id, userId);
             socket.userId = userId;
 
-            // Update user online status in database
             await User.findByIdAndUpdate(userId, { 
                 isOnline: true
             });
 
             console.log(`User ${userId} is now online`);
-
-            // Send confirmation to the user
             socket.emit('registered', { success: true });
 
         } catch (error) {
@@ -156,20 +179,16 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Handle user disconnection
     socket.on('disconnect', async () => {
         try {
             const userId = connectedUsers.get(socket.id);
             
             if (userId) {
-                // Remove from connected users
                 connectedUsers.delete(socket.id);
 
-                // Check if user has other active connections
                 const hasOtherConnections = Array.from(connectedUsers.values()).some(id => id === userId);
 
                 if (!hasOtherConnections) {
-                    // Update user offline status in database
                     await User.findByIdAndUpdate(userId, { 
                         isOnline: false
                     });
@@ -184,10 +203,9 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Handle manual logout
-    socket.on('logout', async (data) => { //  Now accepts data object
+    socket.on('logout', async (data) => {
         try {
-            const { userId } = data; // Extract userId from data
+            const { userId } = data;
             
             if (!userId) {
                 console.log('No userId provided in logout event');
@@ -196,7 +214,6 @@ io.on('connection', (socket) => {
 
             console.log(`User ${userId} logging out via socket`);
 
-            // Remove all connections for this user
             for (let [socketId, uid] of connectedUsers.entries()) {
                 if (uid === userId) {
                     connectedUsers.delete(socketId);
@@ -204,10 +221,9 @@ io.on('connection', (socket) => {
                 }
             }
 
-            // Update user offline status
             await User.findByIdAndUpdate(userId, { 
                 isOnline: false,
-                lastSeen: new Date() // Add this
+                lastSeen: new Date()
             });
 
             console.log(`User ${userId} status updated to offline (manual logout)`);
@@ -245,7 +261,8 @@ app.use(passport.session());
 passport.use(new LocalStrategy({
     usernameField: 'email',    
     passwordField: 'password'  
-}, User.authenticate()));passport.serializeUser(User.serializeUser());
+}, User.authenticate()));
+passport.serializeUser(User.serializeUser());
 passport.deserializeUser(User.deserializeUser());
 
 // Serve static files from the 'public' directory
