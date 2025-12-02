@@ -4,7 +4,7 @@
       "builder": "RAILPACK"
     },
     "deploy": {
-      "runtime": "Node",
+      "runtime": "V2",
       "numReplicas": 1,
       "sleepApplication": false,
       "useLegacyStacker": false,
