@@ -290,9 +290,9 @@ router.post('/add-show-details', upload.any(), decodeShowData, async (req, res) 
 
         // Process download links for episodes
         const processedSeasons = await Promise.all(
-            showsDetailsData.seasons.map(async (season) => {
+            showsDetailsData.seasons.map(async (season, seasonIndex) => {
                 const processedEpisodes = await Promise.all(
-                    season.episodes.map(async (episode) => {
+                    season.episodes.map(async (episode, episodeIndex) => {
                         let downloadLinkUrl = episode.downloadLink;
                         
                         // Check if there's a file upload for this episode
@@ -338,12 +338,16 @@ router.post('/add-show-details', upload.any(), decodeShowData, async (req, res) 
                             }
                         }
 
+                        // FIX: Preserve the episode poster from the original data
+                        // The poster should come from the episode data passed in the request
+                        const episodePoster = episode.poster || "";
+
                         return {
                             episode_number: Number(episode.episode_number),
                             name: episode.name,
                             runtime: Number(episode.runtime),
                             overview: episode.overview,
-                            poster: episode.poster || "",
+                            poster: episodePoster, // Use the actual poster URL
                             downloadLink: downloadLinkUrl
                         };
                     })
