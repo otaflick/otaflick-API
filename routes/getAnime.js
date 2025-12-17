@@ -35,8 +35,7 @@ router.get('/getRecentAnime', async (req, res) => {
   try {
       // Fetch the recently uploaded anime, sorted by uploadTime (newest first)
       const recentAnime = await Anime.find({})
-          .sort({ uploadTime: -1 }) // Sort by uploadTime field, descending
-          .limit(20); // Limit to the most recent 20 anime
+          .sort({ uploadTime: -1 }); // Sort by uploadTime field, descending
 
       // Respond with the list of anime
       res.status(200).json({ success: true, anime: recentAnime });
@@ -50,8 +49,7 @@ router.get('/getRecentAnime', async (req, res) => {
 router.get('/latest-released-anime', async (req, res) => {
   try {
     const latestAnime = await Anime.find()
-      .sort({ releaseDate: -1 }) // Sort by releaseDate in descending order
-      .limit(20);               // Limit the results to 20
+      .sort({ releaseDate: -1 });// Sort by releaseDate in descending order
     res.status(200).json(latestAnime);
   } catch (error) {
     console.error('Error fetching latest anime releases:', error);
@@ -130,8 +128,7 @@ router.get('/getAnimeByStatus/:status', async (req, res) => {
 router.get('/getPopularAnime', async (req, res) => {
   try {
     const popularAnime = await Anime.find()
-      .sort({ ratings: -1 })
-      .limit(20);
+      .sort({ ratings: -1 });
     res.json(popularAnime);
   } catch (error) {
     console.error(error);

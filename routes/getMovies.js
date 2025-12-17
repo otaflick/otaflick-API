@@ -28,8 +28,8 @@ router.get('/getRecentAddedMovies', async (req, res) => {
   try {
       // Fetch the recently uploaded Movies, sorted by uploadTime (newest first)
       const recentMovies = await Movie.find({})
-          .sort({ uploadTime: -1 }) // Sort by uploadTime field, descending
-          .limit(20); // Limit to the most recent 20 Movies
+          .sort({ uploadTime: -1 }); // Sort by uploadTime field, descending
+           // Limit to the most recent 20 Movies
 
       // Respond with the list of Movies
       res.status(200).json({ success: true, movies: recentMovies });
@@ -43,8 +43,7 @@ router.get('/getRecentAddedMovies', async (req, res) => {
 router.get('/latest-released-movies', async (req, res) => {
   try {
     const latestMovies = await Movie.find()
-      .sort({ releaseDate: -1 }) // Sort by releaseDate in descending order
-      .limit(20);               // Limit the results to 20
+      .sort({ releaseDate: -1 }); // Sort by releaseDate in descending order
     res.status(200).json(latestMovies);
   } catch (error) {
     console.error('Error fetching latest releases:', error);
