@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Movie = require('../models/movie');
-const s3 = require('../service/aws.s3.bucket'); 
+const s3 = require('../service/aws.s3.bucket');
 const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
 const ffmpeg = require('fluent-ffmpeg');
@@ -15,7 +15,7 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 
 // Configure multer for file uploads
 const upload = multer({
-  storage: multer.memoryStorage()
+    storage: multer.memoryStorage()
 });
 
 // MP4 conversion function
@@ -34,20 +34,20 @@ async function convertToMP4(inputBuffer, originalExtension) {
                 .outputOptions(['-c:v libx264', '-c:a aac', '-movflags frag_keyframe+empty_moov'])
                 .output(tempOutputPath)
                 .on('error', async (err) => {
-                    await unlink(tempInputPath).catch(() => {});
-                    await unlink(tempOutputPath).catch(() => {});
+                    await unlink(tempInputPath).catch(() => { });
+                    await unlink(tempOutputPath).catch(() => { });
                     reject(err);
                 })
                 .on('end', async () => {
                     const convertedBuffer = fs.readFileSync(tempOutputPath);
-                    await unlink(tempInputPath).catch(() => {});
-                    await unlink(tempOutputPath).catch(() => {});
+                    await unlink(tempInputPath).catch(() => { });
+                    await unlink(tempOutputPath).catch(() => { });
                     resolve(convertedBuffer);
                 })
                 .run();
         } catch (error) {
-            await unlink(tempInputPath).catch(() => {});
-            await unlink(tempOutputPath).catch(() => {});
+            await unlink(tempInputPath).catch(() => { });
+            await unlink(tempOutputPath).catch(() => { });
             reject(error);
         }
     });
@@ -58,7 +58,7 @@ function decodeHTMLEntities(text) {
     if (typeof text !== 'string') return text;
     const entities = {
         '&amp;': '&',
-        '&lt;': '<', 
+        '&lt;': '<',
         '&gt;': '>',
         '&quot;': '"',
         '&#39;': "'",
@@ -75,10 +75,10 @@ const decodeMovieData = (req, res, next) => {
         if (req.body) {
             // Decode all text fields that might contain HTML entities
             const fieldsToDecode = [
-                'title', 'overview', 'originalTitle', 'genres', 
+                'title', 'overview', 'originalTitle', 'genres',
                 'productionCompanies', 'watchProviders', 'status'
             ];
-            
+
             fieldsToDecode.forEach(field => {
                 if (req.body[field]) {
                     req.body[field] = decodeHTMLEntities(req.body[field]);
@@ -117,17 +117,17 @@ router.get('/movies/:id', async (req, res) => {
 // Updated S3 upload endpoint with MP4 conversion
 router.post('/upload-to-s3-update', upload.single('file'), async (req, res) => {
     console.log('=== S3 UPLOAD FOR UPDATE ===');
-    
+
     try {
         if (!req.file) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 success: false,
-                error: 'No file uploaded' 
+                error: 'No file uploaded'
             });
         }
 
         const { movieName } = req.body;
-        
+
         // Check if conversion needed
         const fileExtension = '.' + req.file.originalname.split('.').pop().toLowerCase();
         const videoFormats = ['.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp'];
@@ -170,10 +170,10 @@ router.post('/upload-to-s3-update', upload.single('file'), async (req, res) => {
         };
 
         const uploadResult = await s3.upload(uploadParams).promise();
-        
+
         console.log('Upload successful!');
         console.log('S3 Location:', uploadResult.Location);
-        
+
         res.json({
             success: true,
             url: uploadResult.Location,
@@ -185,9 +185,9 @@ router.post('/upload-to-s3-update', upload.single('file'), async (req, res) => {
 
     } catch (error) {
         console.error('S3 UPLOAD FAILED:', error);
-        
+
         let userMessage = 'Failed to upload file to S3';
-        
+
         if (error.message.includes('timeout')) {
             userMessage = 'S3 upload timed out. The file may be too large or there may be network issues.';
         } else if (error.code === 'UnknownEndpoint') {
@@ -201,8 +201,8 @@ router.post('/upload-to-s3-update', upload.single('file'), async (req, res) => {
         } else if (error.code === 'NoSuchBucket') {
             userMessage = `S3 bucket '${process.env.AWS_BUCKET_NAME}' does not exist.`;
         }
-        
-        res.status(500).json({ 
+
+        res.status(500).json({
             success: false,
             error: userMessage,
             details: error.message,
@@ -216,7 +216,9 @@ router.post('/update-movie/:id', upload.any(), decodeMovieData, async (req, res)
     try {
         // Check if there's a file upload for the movie
         let downloadLink = req.body.downloadLink;
-        const uploadedFile = req.files.find(file => file.fieldname === 'file_downloadLink');
+        const uploadedFile = req.files?.find(
+            file => file.fieldname === 'file_downloadLink'
+        );
 
         if (uploadedFile) {
             try {
